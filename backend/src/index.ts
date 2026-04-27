@@ -2,7 +2,7 @@ import express, { Express, Request, Response } from 'express';
 import { executeHandler } from './controllers/execute.controller';
 
 const app: Express = express();
-const PORT = 3000;
+const PORT = 3001;
 
 app.use(express.json());
 
