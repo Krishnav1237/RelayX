@@ -23,11 +23,17 @@ export class YieldAgent extends BaseAgent {
     super('yield.relay.eth', 'yield.relay.eth');
   }
 
-  think(intent: string, attempt: number, trace: AgentTrace[], timestamp: number): YieldThinkResult {
+  think(
+    intent: string,
+    attempt: number,
+    trace: AgentTrace[],
+    timestamp: number,
+    externalMetadata?: Record<string, unknown>
+  ): YieldThinkResult {
     let ts = timestamp;
 
     // Step: analyze intent
-    trace.push(this.log('analyze', `Analyzing user intent: "${intent}"`, { attempt }, ts));
+    trace.push(this.log('analyze', `Analyzing user intent: "${intent}"`, { attempt }, ts, externalMetadata));
     ts += 10;
 
     // Sort by APY descending for deterministic selection
@@ -75,7 +81,7 @@ export class YieldAgent extends BaseAgent {
       options: sortedOptions.map(o => ({ protocol: o.protocol, apy: o.apy, riskLevel: o.riskLevel })),
       comparisons,
       confidence,
-    }, ts));
+    }, ts, externalMetadata));
     ts += 10;
 
     // Step: selection decision
@@ -83,7 +89,7 @@ export class YieldAgent extends BaseAgent {
       selectedOption,
       attempt,
       confidence,
-    }, ts));
+    }, ts, externalMetadata));
 
     return {
       options: sortedOptions,

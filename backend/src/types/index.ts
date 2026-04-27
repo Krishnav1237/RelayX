@@ -58,4 +58,15 @@ export interface RiskReviewResult {
   reasoning: string;
   riskScore?: number;
   flags?: string[];
+  ensInfluence?: {
+    success_rate: number;
+    impact: 'increased confidence' | 'decreased confidence';
+  };
+}
+
+export interface RiskENSSignals {
+  successRate?: number;
+  reputation?: string;
+  role?: string;
+  sourceAgent?: string;
 }

@@ -10,7 +10,13 @@ export class ExecutorAgent extends BaseAgent {
     super('executor.relay.eth', 'executor.relay.eth');
   }
 
-  execute(plan: YieldOption, trace: AgentTrace[], attempt: number, timestamp: number): ExecutionResult {
+  execute(
+    plan: YieldOption,
+    trace: AgentTrace[],
+    attempt: number,
+    timestamp: number,
+    externalMetadata?: Record<string, unknown>
+  ): ExecutionResult {
     const confidence = normalizeConfidence(0.9);
     let ts = timestamp;
 
@@ -21,7 +27,7 @@ export class ExecutorAgent extends BaseAgent {
       action: 'deposit',
       attempt,
       confidence,
-    }, ts));
+    }, ts, externalMetadata));
     ts += 10;
 
     const result: ExecutionResult = {
@@ -39,7 +45,7 @@ export class ExecutorAgent extends BaseAgent {
       action: result.action,
       attempt,
       confidence,
-    }, ts));
+    }, ts, externalMetadata));
 
     return result;
   }
