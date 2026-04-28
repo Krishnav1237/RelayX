@@ -8,6 +8,9 @@ export async function executeHandler(
   req: Request,
   res: Response
 ): Promise<void> {
+  const startedAt = Date.now();
+  console.log('[CONTROLLER] Request received');
+
   try {
     const { intent, context } = req.body;
 
@@ -18,6 +21,7 @@ export async function executeHandler(
       });
       return;
     }
+    console.log(`[CONTROLLER] Intent validated: ${intent.trim()}`);
 
     // Build request
     const request: ExecutionRequest = {
@@ -25,9 +29,17 @@ export async function executeHandler(
       context,
     };
 
+    console.log('[CONTROLLER] Calling ExecutionService');
     const result = await executionService.execute(request);
     res.json(result);
+    console.log(`[CONTROLLER] Response sent (${Date.now() - startedAt}ms)`);
   } catch (error) {
+    console.error('[CONTROLLER] Error while handling /execute');
+    console.error(error);
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    }
+
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(500).json({ error: message });
   }

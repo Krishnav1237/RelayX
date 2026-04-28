@@ -29,7 +29,10 @@ export interface ExecutionSummary {
 
 export interface ExecutionRequest {
   intent: string;
-  context?: Record<string, unknown>;
+  context?: {
+    ens?: string;
+    wallet?: string;
+  };
 }
 
 export interface ExecutionResponse {
@@ -59,14 +62,14 @@ export interface RiskReviewResult {
   riskScore?: number;
   flags?: string[];
   ensInfluence?: {
-    success_rate: number;
+    reputationScore: number;
+    sources: string[];
     impact: 'increased confidence' | 'decreased confidence';
   };
 }
 
-export interface RiskENSSignals {
-  successRate?: number;
-  reputation?: string;
-  role?: string;
-  sourceAgent?: string;
+export interface ENSReputationContext {
+  sources: string[];
+  resolved: string[];
+  reputationScore: number;
 }

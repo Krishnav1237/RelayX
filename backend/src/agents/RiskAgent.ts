@@ -1,5 +1,5 @@
 import { BaseAgent } from './BaseAgent';
-import { AgentTrace, RiskENSSignals, RiskReviewResult, YieldOption } from '../types';
+import { AgentTrace, ENSReputationContext, RiskReviewResult, YieldOption } from '../types';
 
 function normalizeConfidence(value: number): number {
   // Cap at 0.95 for risk agent - never return 1.0
@@ -16,22 +16,19 @@ export class RiskAgent extends BaseAgent {
     trace: AgentTrace[],
     timestamp: number,
     externalMetadata?: Record<string, unknown>,
-    ensSignals?: RiskENSSignals
+    ensContext?: ENSReputationContext
   ): RiskReviewResult {
     let ts = timestamp;
-    const successRate = this.normalizeSuccessRate(ensSignals?.successRate);
-    const reputation = ensSignals?.reputation?.trim();
-    const role = ensSignals?.role?.trim();
-    const ensInfluence = this.getENSInfluence(successRate);
-    const mediumRiskApyThreshold = successRate !== undefined
-      ? successRate > 0.9
-        ? 5.0
-        : successRate < 0.7
-          ? 4.0
-          : 4.5
-      : 4.5;
-    const normalizedReputation = reputation?.toLowerCase();
-    const normalizedRole = role?.toLowerCase();
+    const reputationScore = this.normalizeReputationScore(ensContext?.reputationScore ?? 0.5);
+    const sources = ensContext?.sources ?? [];
+    const hasStrongENS = reputationScore > 0.85;
+    const hasWeakENS = reputationScore < 0.7;
+    const ensInfluence = this.getENSInfluence(reputationScore, sources, hasStrongENS, hasWeakENS);
+    const mediumRiskApyThreshold = hasStrongENS
+      ? 4.6
+      : hasWeakENS
+        ? 4.2
+        : 4.5;
 
     // Step: review start
     trace.push(this.log('review', `Reviewing risk profile for ${plan.protocol} (${plan.apy}% APY)`, {
@@ -58,40 +55,14 @@ export class RiskAgent extends BaseAgent {
       riskScore += 20;
     }
 
-    // ENS success-rate influence.
-    if (successRate !== undefined) {
-      if (successRate < 0.7) {
-        flags.push(`Low historical success rate (${successRate.toFixed(2)})`);
-        riskScore += 15;
-        confidenceAdjustment -= 0.12;
-      } else if (successRate > 0.9) {
-        riskScore = Math.max(0, riskScore - 10);
-        confidenceAdjustment += 0.08;
-      }
-    }
-
     // ENS reputation influence.
-    if (normalizedReputation) {
-      if (/(low|poor|weak|untrusted|risky)/.test(normalizedReputation)) {
-        flags.push(`ENS reputation indicates elevated risk (${reputation})`);
-        riskScore += 10;
-        confidenceAdjustment -= 0.05;
-      } else if (/(high|strong|trusted|excellent)/.test(normalizedReputation)) {
-        riskScore = Math.max(0, riskScore - 8);
-        confidenceAdjustment += 0.05;
-      }
-    }
-
-    // ENS role influence.
-    if (normalizedRole) {
-      if (normalizedRole.includes('guardian') || normalizedRole.includes('auditor')) {
-        riskScore = Math.max(0, riskScore - 5);
-        confidenceAdjustment += 0.03;
-      } else if (normalizedRole.includes('experimental') || normalizedRole.includes('beta')) {
-        flags.push(`ENS role indicates experimental behavior (${role})`);
-        riskScore += 5;
-        confidenceAdjustment -= 0.03;
-      }
+    if (hasWeakENS) {
+      flags.push(`Weak ENS reputation signals (${reputationScore.toFixed(2)})`);
+      riskScore += 15;
+      confidenceAdjustment -= 0.12;
+    } else if (hasStrongENS) {
+      riskScore = Math.max(0, riskScore - 5);
+      confidenceAdjustment += 0.04;
     }
 
     const decision: 'approve' | 'reject' = riskScore >= 40 ? 'reject' : 'approve';
@@ -100,8 +71,7 @@ export class RiskAgent extends BaseAgent {
     const reasoning = this.buildReasoning({
       plan,
       decision,
-      successRate,
-      reputation,
+      reputationScore,
       flags,
     });
 
@@ -120,57 +90,54 @@ export class RiskAgent extends BaseAgent {
       reasoning,
       riskScore,
       flags: flags.length > 0 ? flags : undefined,
-      ensInfluence,
+      ...(ensInfluence ? { ensInfluence } : {}),
     };
   }
 
-  private normalizeSuccessRate(value: number | undefined): number | undefined {
-    if (value === undefined || !Number.isFinite(value)) {
-      return undefined;
+  private normalizeReputationScore(value: number): number {
+    if (!Number.isFinite(value)) {
+      return 0.5;
     }
 
-    const normalized = value > 1 ? value / 100 : value;
-    return Math.round(Math.max(0, Math.min(1, normalized)) * 100) / 100;
+    return Math.round(Math.max(0, Math.min(1, value)) * 100) / 100;
   }
 
   private getENSInfluence(
-    successRate: number | undefined
+    reputationScore: number,
+    sources: string[],
+    hasStrongENS: boolean,
+    hasWeakENS: boolean
   ): RiskReviewResult['ensInfluence'] | undefined {
-    if (successRate === undefined) {
-      return undefined;
-    }
-
-    if (successRate >= 0.7 && successRate <= 0.9) {
+    if (!hasStrongENS && !hasWeakENS) {
       return undefined;
     }
 
     return {
-      success_rate: successRate,
-      impact: successRate > 0.9 ? 'increased confidence' : 'decreased confidence',
+      reputationScore,
+      sources,
+      impact: hasStrongENS ? 'increased confidence' : 'decreased confidence',
     };
   }
 
   private buildReasoning(params: {
     plan: YieldOption;
     decision: 'approve' | 'reject';
-    successRate: number | undefined;
-    reputation: string | undefined;
+    reputationScore: number;
     flags: string[];
   }): string {
-    const { plan, decision, successRate, reputation, flags } = params;
+    const { plan, decision, reputationScore, flags } = params;
     const riskLevel = plan.riskLevel ?? 'unknown';
-    const reputationSuffix = reputation ? ` and ENS reputation "${reputation}"` : '';
 
-    if (decision === 'reject' && successRate !== undefined && successRate < 0.7) {
-      return `Rejected ${plan.protocol} due to ${riskLevel} risk and low historical success rate (${successRate.toFixed(2)})${reputationSuffix}`;
+    if (decision === 'reject' && reputationScore < 0.7) {
+      return `Rejected ${plan.protocol} due to ${riskLevel} risk and weak ENS reputation signals (${reputationScore.toFixed(2)})`;
     }
 
-    if (decision === 'approve' && successRate !== undefined && successRate > 0.9) {
-      return `Approved ${plan.protocol} due to ${riskLevel} risk and high success rate (${successRate.toFixed(2)})${reputationSuffix}`;
+    if (decision === 'approve' && reputationScore > 0.85 && riskLevel === 'medium') {
+      return `Approved ${plan.protocol} due to strong ENS reputation (${reputationScore.toFixed(2)}) allowing slightly higher risk tolerance`;
     }
 
     if (decision === 'approve') {
-      return `Approved ${plan.protocol}: ${riskLevel} risk at ${plan.apy}% APY with ENS-adjusted review${reputationSuffix}`;
+      return `Approved ${plan.protocol}: ${riskLevel} risk at ${plan.apy}% APY with ENS reputation score (${reputationScore.toFixed(2)})`;
     }
 
     return `Rejected ${plan.protocol}: ${flags.join('; ')}`;

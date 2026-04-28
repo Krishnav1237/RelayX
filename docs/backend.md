@@ -19,6 +19,7 @@ File: `src/index.ts`
   - `GET /health` → uptime health response.
   - `POST /execute` → orchestration endpoint.
 - Binds server on port `3001`.
+- Runs a startup ENS smoke check (`vitalik.eth`) for RPC diagnostics.
 
 ## 3) Controller Layer
 
@@ -38,19 +39,30 @@ File: `src/orchestrator/ExecutionService.ts`
 
 `ExecutionService.execute(request)` performs the full pipeline:
 
-1. Resolves ENS identity + text records (`success_rate`, `reputation`, `role`, etc.) for core agents once per request.
-2. Starts trace with `system.relay.eth`.
-3. Calls `YieldAgent.think(intent, attempt=1)`.
-4. Calls `RiskAgent.review(selectedOption)` with ENS-derived risk signals.
-5. If rejected and retries remain:
+1. Builds dynamic ENS sources per request:
+   - primary: user-provided `context.ens` (when valid)
+   - optional: wallet reverse ENS via `context.wallet`
+   - optional: resolvable agent ENS identities (`yield.relay.eth`, `risk.relay.eth`)
+   - defaults/fallback: `ens.eth`, `nick.eth`, and `vitalik.eth` when no user ENS is provided
+   - deterministic source list with dedupe and max 3 entries
+2. Resolves the selected ENS sources once per request.
+3. Fetches deterministic reputation signals from on-chain ENS state:
+   - resolution success (address exists)
+   - text record availability (`description`, `url`, `com.twitter`, `com.github`)
+   - trusted-source weighting for known ENS sources
+4. Builds a global ENS reputation context (`sources`, `resolved`, `reputationScore`).
+5. Starts trace with `system.relay.eth`.
+6. Calls `YieldAgent.think(intent, attempt=1)`.
+7. Calls `RiskAgent.review(selectedOption)` with ENS reputation context.
+8. If rejected and retries remain:
    - appends system retry trace
    - runs `YieldAgent` again with `attempt=2`
    - re-runs `RiskAgent`
-6. Appends final-plan trace.
-7. Calls `ExecutorAgent.execute(finalPlan, attempt)`.
-8. Appends completion trace.
-9. Computes final confidence from yield + risk + execution confidence values.
-10. Returns `ExecutionResponse` including `trace`, `final_result`, `summary`, and `debug`.
+9. Appends final-plan trace.
+10. Calls `ExecutorAgent.execute(finalPlan, attempt)`.
+11. Appends completion trace.
+12. Computes final confidence from yield + risk + execution confidence values.
+13. Returns `ExecutionResponse` including `trace`, `final_result`, `summary`, and `debug`.
 
 ## 5) Agent Modules
 
@@ -68,9 +80,9 @@ Defines shared identity (`id`, `name`) and structured trace logging helper.
 ### `src/agents/RiskAgent.ts`
 
 - Reviews selected plan risk profile.
-- Produces a deterministic decision function across APY + `riskLevel` + ENS signals (`successRate`, `reputation`, `role`).
-- Low ENS success rate (<0.7) tightens rejection and lowers confidence.
-- High ENS success rate (>0.9) increases confidence and allows slightly higher medium-risk APY.
+- Produces a deterministic decision function across APY + `riskLevel` + ENS `reputationScore`.
+- Low ENS reputation score (<0.7) tightens rejection and lowers confidence.
+- High ENS reputation score (>0.85) increases confidence and allows medium-risk APY up to 4.6.
 - Emits `ensInfluence` metadata in risk trace entries.
 
 ### `src/agents/ExecutorAgent.ts`
@@ -87,13 +99,13 @@ Defines shared identity (`id`, `name`) and structured trace logging helper.
 
 Files in `src/adapters/`:
 
-- `ENSAdapter.ts` (implemented): viem-based Ethereum mainnet ENS resolution + text-record lookup + in-memory cache (5-minute TTL).
+- `ENSAdapter.ts` (implemented): viem-based Ethereum mainnet ENS resolution + text-record lookup + in-memory cache (5-minute TTL), using `ALCHEMY_MAINNET_RPC_URL`.
 - `AXLAdapter.ts` (Axelar placeholder)
 - `ExecutionAdapter.ts` (KeeperHub placeholder)
 - `MemoryAdapter.ts` (0G storage placeholder)
 - `SwapAdapter.ts` (Uniswap placeholder)
 
-Execution orchestration now resolves ENS identity metadata for backend agents once per request and enriches trace metadata with that identity context.
+Execution orchestration now resolves external ENS sources once per request and uses them as a reputation signal layer for risk decisions.
 
 ## 8) Configuration Files
 

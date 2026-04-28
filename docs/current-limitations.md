@@ -30,7 +30,7 @@ Impact: contract drift risk when response shape evolves.
 
 ## 4) Partial Adapter Layer Coverage
 
-`backend/src/adapters/ENSAdapter.ts` is integrated for agent identity metadata, but the remaining adapters (`AXLAdapter`, `ExecutionAdapter`, `MemoryAdapter`, `SwapAdapter`) are still placeholders and not integrated into execution path.
+`backend/src/adapters/ENSAdapter.ts` is integrated as an external ENS reputation signal layer, but the remaining adapters (`AXLAdapter`, `ExecutionAdapter`, `MemoryAdapter`, `SwapAdapter`) are still placeholders and not integrated into execution path.
 
 Impact: execution remains mostly simulation-oriented apart from ENS enrichment.
 
