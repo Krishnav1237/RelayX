@@ -21,9 +21,10 @@ export class RiskAgent extends BaseAgent {
     let ts = timestamp;
     const reputationScore = this.normalizeReputationScore(ensContext?.reputationScore ?? 0.5);
     const sources = ensContext?.sources ?? [];
+    const primarySource = sources[0] ?? 'unknown';
     const hasStrongENS = reputationScore > 0.85;
     const hasWeakENS = reputationScore < 0.7;
-    const ensInfluence = this.getENSInfluence(reputationScore, sources, hasStrongENS, hasWeakENS);
+    const ensInfluence = this.getENSInfluence(reputationScore, sources, primarySource, hasStrongENS, hasWeakENS);
     const mediumRiskApyThreshold = hasStrongENS
       ? 4.6
       : hasWeakENS
@@ -72,6 +73,7 @@ export class RiskAgent extends BaseAgent {
       plan,
       decision,
       reputationScore,
+      primarySource,
       flags,
     });
 
@@ -105,6 +107,7 @@ export class RiskAgent extends BaseAgent {
   private getENSInfluence(
     reputationScore: number,
     sources: string[],
+    primarySource: string,
     hasStrongENS: boolean,
     hasWeakENS: boolean
   ): RiskReviewResult['ensInfluence'] | undefined {
@@ -115,6 +118,7 @@ export class RiskAgent extends BaseAgent {
     return {
       reputationScore,
       sources,
+      primarySource,
       impact: hasStrongENS ? 'increased confidence' : 'decreased confidence',
     };
   }
@@ -123,23 +127,29 @@ export class RiskAgent extends BaseAgent {
     plan: YieldOption;
     decision: 'approve' | 'reject';
     reputationScore: number;
+    primarySource: string;
     flags: string[];
   }): string {
-    const { plan, decision, reputationScore, flags } = params;
+    const { plan, decision, reputationScore, primarySource, flags } = params;
     const riskLevel = plan.riskLevel ?? 'unknown';
+    const sourceClause = `primarily influenced by ${primarySource}`;
 
     if (decision === 'reject' && reputationScore < 0.7) {
-      return `Rejected ${plan.protocol} due to ${riskLevel} risk and weak ENS reputation signals (${reputationScore.toFixed(2)})`;
+      return `Rejected ${plan.protocol} due to ${riskLevel} risk and weak ENS reputation signals (${reputationScore.toFixed(2)}) ${sourceClause}`;
     }
 
     if (decision === 'approve' && reputationScore > 0.85 && riskLevel === 'medium') {
-      return `Approved ${plan.protocol} due to strong ENS reputation (${reputationScore.toFixed(2)}) allowing slightly higher risk tolerance`;
+      return `Approved ${plan.protocol} due to strong ENS reputation (${reputationScore.toFixed(2)}) allowing slightly higher risk tolerance ${sourceClause}`;
+    }
+
+    if (decision === 'approve' && reputationScore > 0.85) {
+      return `Approved ${plan.protocol} due to ${riskLevel} risk and strong ENS reputation (${reputationScore.toFixed(2)}) ${sourceClause}`;
     }
 
     if (decision === 'approve') {
-      return `Approved ${plan.protocol}: ${riskLevel} risk at ${plan.apy}% APY with ENS reputation score (${reputationScore.toFixed(2)})`;
+      return `Approved ${plan.protocol} due to ${riskLevel} risk and ENS reputation (${reputationScore.toFixed(2)}) ${sourceClause}`;
     }
 
-    return `Rejected ${plan.protocol}: ${flags.join('; ')}`;
+    return `Rejected ${plan.protocol}: ${flags.join('; ')} ${sourceClause}`;
   }
 }

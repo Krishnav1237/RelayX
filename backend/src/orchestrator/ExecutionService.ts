@@ -219,25 +219,28 @@ export class ExecutionService {
   async execute(request: ExecutionRequest): Promise<ExecutionResponse> {
     console.log('[EXEC] Execution start', { intent: request.intent });
     const defaultSources = [...DEFAULT_ENS_SOURCES];
-    const dynamicSources: string[] = [];
-
-    if (this.isEnsName(request.context?.ens)) {
-      dynamicSources.push(this.normalizeEnsName(request.context.ens));
-    }
-
-    if (dynamicSources.length === 0) {
-      dynamicSources.push('vitalik.eth');
-    }
+    const userENS = this.isEnsName(request.context?.ens)
+      ? this.normalizeEnsName(request.context.ens)
+      : null;
 
     let walletENS: string | null = null;
     if (this.isWalletAddress(request.context?.wallet)) {
       walletENS = await this.reverseLookupWalletENS(request.context.wallet);
     }
 
+    const dynamicSources: string[] = [];
+    if (userENS) {
+      dynamicSources.push(userENS);
+    }
+    if (walletENS) {
+      dynamicSources.push(walletENS);
+    }
+    if (!userENS && !walletENS) {
+      dynamicSources.push('vitalik.eth');
+    }
+
     const baseSources = this.uniqEnsSources([...dynamicSources, ...defaultSources]);
-    const prioritizedSources = walletENS
-      ? this.uniqEnsSources([walletENS, ...baseSources])
-      : baseSources;
+    const prioritizedSources = this.uniqEnsSources(baseSources);
 
     const agentProfiles = await Promise.all(
       AGENT_ENS.map(async (name) => {
@@ -266,9 +269,7 @@ export class ExecutionService {
     console.log(`[EXEC] Reputation score: ${ensContext.reputationScore}`);
     const systemENSMetadata = this.withENSContextMetadata({
       ensSourcesUsed: finalENSSources,
-      userENS: this.isEnsName(request.context?.ens)
-        ? this.normalizeEnsName(request.context.ens)
-        : null,
+      userENS,
       walletENS,
     }, ensContext, ensSourceSignals);
 

@@ -64,6 +64,7 @@ export interface RiskReviewResult {
   ensInfluence?: {
     reputationScore: number;
     sources: string[];
+    primarySource: string;
     impact: 'increased confidence' | 'decreased confidence';
   };
 }
