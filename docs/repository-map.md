@@ -30,6 +30,10 @@ This map reflects the current tracked files in Git and their purpose.
 - `backend/package-lock.json` — backend dependency lockfile.
 - `backend/tsconfig.json` — TypeScript compiler configuration.
 
+### Scripts
+
+- `backend/scripts/axl-mock-node.js` — local mock AXL HTTP node (`/health`, `/message`, `/broadcast`) for backend integration testing.
+
 ### Source: entry and controller
 
 - `backend/src/index.ts` — Express server bootstrap and routes.
@@ -49,7 +53,7 @@ This map reflects the current tracked files in Git and their purpose.
 ### Source: adapters
 
 - `backend/src/adapters/ENSAdapter.ts` — viem-based ENS resolver + text-record fetcher + cache.
-- `backend/src/adapters/AXLAdapter.ts` — placeholder for Axelar cross-chain logic.
+- `backend/src/adapters/AXLAdapter.ts` — local AXL HTTP adapter with timeout-safe send/broadcast and deterministic simulated-peer fallback.
 - `backend/src/adapters/ExecutionAdapter.ts` — placeholder for execution-layer integration.
 - `backend/src/adapters/MemoryAdapter.ts` — placeholder for memory/storage integration.
 - `backend/src/adapters/SwapAdapter.ts` — placeholder for swap integration.

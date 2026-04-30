@@ -12,6 +12,29 @@ Base URL for local development: `http://localhost:3001`
 }
 ```
 
+## `GET /axl-health`
+
+Checks backend-to-AXL-node connectivity using `AXL_BASE_URL/health`.
+
+### Success Response (200)
+
+```json
+{
+  "status": "ok",
+  "axlBaseUrl": "http://localhost:3005"
+}
+```
+
+### Failure Response (503)
+
+```json
+{
+  "status": "error",
+  "axlBaseUrl": "http://localhost:3005",
+  "details": "fetch failed"
+}
+```
+
 ## `POST /execute`
 
 Triggers intent orchestration and returns the full execution artifact.
@@ -22,7 +45,8 @@ Triggers intent orchestration and returns the full execution artifact.
 {
   "intent": "Find the safest yield for 1000 USDC",
   "context": {
-    "chain": "ethereum"
+    "ens": "vitalik.eth",
+    "wallet": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
   }
 }
 ```
@@ -31,7 +55,9 @@ Triggers intent orchestration and returns the full execution artifact.
 
 - `intent` is required.
 - `intent` must be a non-empty string after trimming.
-- `context` is optional and passed through as-is.
+- `context` is optional:
+  - `context.ens`: optional ENS name (must include `.eth` to be used)
+  - `context.wallet`: optional EVM wallet address for reverse ENS lookup
 
 ### Success Response Shape
 
@@ -43,6 +69,9 @@ Triggers intent orchestration and returns the full execution artifact.
       "agent": "system.relay.eth",
       "step": "start",
       "message": "Processing user intent: \"Find the safest yield for 1000 USDC\"",
+      "metadata": {
+        "ensSourcesUsed": ["vitalik.eth", "ens.eth", "nick.eth"]
+      },
       "timestamp": 1710000000000
     }
   ],
@@ -80,6 +109,15 @@ Triggers intent orchestration and returns the full execution artifact.
   }
 }
 ```
+
+### AXL-related trace entries
+
+When AXL is active, trace can include messages like:
+
+- `AXL request sent`
+- `AXL response received`
+- `AXL consensus: X/Y agents approved`
+- `AXL consensus applied`
 
 ### Error Responses
 

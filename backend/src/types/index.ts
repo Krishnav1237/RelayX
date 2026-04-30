@@ -74,3 +74,11 @@ export interface ENSReputationContext {
   resolved: string[];
   reputationScore: number;
 }
+
+export interface AXLMessage {
+  from: string;
+  to: string;
+  type: 'yield_request' | 'risk_request' | 'execution_signal';
+  payload: Record<string, unknown>;
+  timestamp: number;
+}

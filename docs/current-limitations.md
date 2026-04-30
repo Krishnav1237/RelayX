@@ -30,11 +30,17 @@ Impact: contract drift risk when response shape evolves.
 
 ## 4) Partial Adapter Layer Coverage
 
-`backend/src/adapters/ENSAdapter.ts` is integrated as an external ENS reputation signal layer, but the remaining adapters (`AXLAdapter`, `ExecutionAdapter`, `MemoryAdapter`, `SwapAdapter`) are still placeholders and not integrated into execution path.
+`backend/src/adapters/ENSAdapter.ts` and `backend/src/adapters/AXLAdapter.ts` are integrated into the runtime path. `ExecutionAdapter`, `MemoryAdapter`, and `SwapAdapter` remain placeholders.
 
-Impact: execution remains mostly simulation-oriented apart from ENS enrichment.
+Impact: agent collaboration + ENS reputation signals are active, but execution still lacks on-chain swap/storage/automation adapters.
 
-## 5) Minimal Backend Test/Lint Surface
+## 5) Local AXL Defaults to Mock/Simulated Peers
+
+In local development, AXL commonly runs as the included mock node (or falls back to simulated peer responses when unreachable).
+
+Impact: useful for deterministic integration testing, but not equivalent to production multi-node peer discovery.
+
+## 6) Minimal Backend Test/Lint Surface
 
 Backend `package.json` has no functional test suite and no lint script.
 

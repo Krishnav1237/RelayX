@@ -17,9 +17,11 @@ File: `src/index.ts`
 - Enables JSON parsing with `express.json()`.
 - Exposes:
   - `GET /health` → uptime health response.
+  - `GET /axl-health` → backend-side connectivity check for configured AXL node.
   - `POST /execute` → orchestration endpoint.
 - Binds server on port `3001`.
 - Runs a startup ENS smoke check (`vitalik.eth`) for RPC diagnostics.
+- Reads `AXL_BASE_URL` (default `http://localhost:3005`) for infrastructure AXL connectivity.
 
 ## 3) Controller Layer
 
@@ -76,6 +78,7 @@ Defines shared identity (`id`, `name`) and structured trace logging helper.
 - Sorts options by APY descending.
 - Selects by attempt index (`attempt-1`) for deterministic fallback.
 - Emits analysis and evaluation traces with confidence metadata.
+- Broadcasts `yield_request` over AXL, merges remote suggestions, and deduplicates protocols.
 
 ### `src/agents/RiskAgent.ts`
 
@@ -84,11 +87,13 @@ Defines shared identity (`id`, `name`) and structured trace logging helper.
 - Low ENS reputation score (<0.7) tightens rejection and lowers confidence.
 - High ENS reputation score (>0.85) increases confidence and allows medium-risk APY up to 4.6.
 - Emits `ensInfluence` metadata in risk trace entries.
+- Broadcasts `risk_request` over AXL and applies remote approval/rejection consensus to confidence.
 
 ### `src/agents/ExecutorAgent.ts`
 
 - Emits execution start + completion trace entries.
 - Returns successful mock execution result.
+- Broadcasts execution outcome over AXL and records peer response metadata.
 
 ## 6) Types and Utility
 
@@ -100,16 +105,32 @@ Defines shared identity (`id`, `name`) and structured trace logging helper.
 Files in `src/adapters/`:
 
 - `ENSAdapter.ts` (implemented): viem-based Ethereum mainnet ENS resolution + text-record lookup + in-memory cache (5-minute TTL), using `ALCHEMY_MAINNET_RPC_URL`.
-- `AXLAdapter.ts` (Axelar placeholder)
+- `AXLAdapter.ts` (implemented): local AXL node HTTP adapter (`AXL_BASE_URL` or `http://localhost:3005`) with safe timeout, error handling, and deterministic simulated peers when no live responses are available.
 - `ExecutionAdapter.ts` (KeeperHub placeholder)
 - `MemoryAdapter.ts` (0G storage placeholder)
 - `SwapAdapter.ts` (Uniswap placeholder)
 
-Execution orchestration now resolves external ENS sources once per request and uses them as a reputation signal layer for risk decisions.
+Execution orchestration resolves external ENS sources once per request and uses them as a reputation signal layer for risk decisions. Agents also exchange AXL messages (`yield_request`, `risk_request`, `execution_signal`) and include network-consensus trace metadata without blocking execution.
+
+### AXL HTTP contract used by backend
+
+`AXLAdapter` calls:
+
+- `POST /message` with `{ target, payload }`
+- `POST /broadcast` with `{ payload }`
+
+Broadcast responses accepted by backend can be either:
+
+- `[]` (raw array), or
+- `{ responses: [] }`, or
+- `{ data: [] }`
+
+If no valid responses are returned (or request fails), adapter falls back to deterministic simulated peers.
 
 ## 8) Configuration Files
 
 - `package.json`: backend scripts and dependencies.
+- `scripts/axl-mock-node.js`: local AXL mock node for development on port `3005`.
 - `tsconfig.json`: strict TS compiler settings, NodeNext module resolution.
 - `.gitignore`: ignores `node_modules`, `dist`, logs, env files.
 - `nodemon.json`: watches `src` with `.ts` extension.

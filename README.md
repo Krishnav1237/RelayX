@@ -5,6 +5,9 @@ RelayX is a two-service TypeScript project for intent-centric DeFi execution:
 1. **Backend (`backend/`)**: Express API that receives an intent, runs a multi-agent orchestration flow (yield discovery → risk review → execution), and returns a traceable response.
 2. **Frontend (`frontend/`)**: Next.js App Router UI with a landing page and dashboard that submits intents and visualizes orchestration traces.
 
+AXL runs as standalone infrastructure. Runtime path is:
+**Frontend → Backend API → AXL Node** (frontend does not call AXL directly).
+
 ## Repository Layout
 
 ```text
@@ -18,17 +21,40 @@ RelayX/
 
 ## Quick Start
 
-### 1) Start backend
+### 1) Configure backend environment
+
+RelayX backend reads:
+
+- `ALCHEMY_MAINNET_RPC_URL` (required for live ENS resolution)
+- `AXL_BASE_URL` (optional, defaults to `http://localhost:3005`)
+
+```bash
+export ALCHEMY_MAINNET_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/<your-key>"
+export AXL_BASE_URL="http://localhost:3005"
+```
+
+### 2) Start AXL node (mock for local dev)
 
 ```bash
 cd backend
 npm install
+npm run axl:mock
+```
+
+AXL mock listens on `http://localhost:3005`.
+If you run a real AXL node, set `AXL_BASE_URL` to that endpoint instead.
+
+### 3) Start backend
+
+```bash
+cd backend
 npm run dev
 ```
 
 Backend listens on `http://localhost:3001`.
+AXL health probe is available at `http://localhost:3001/axl-health`.
 
-### 2) Start frontend
+### 4) Start frontend
 
 ```bash
 cd frontend
