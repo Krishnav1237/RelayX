@@ -14,6 +14,15 @@ export interface ExecutionResult {
   action: string;
   status: 'success' | 'failed';
   attempt?: number;
+  swap?: UniswapQuoteResult;
+}
+
+export interface UniswapQuoteResult {
+  amountOut: string;
+  priceImpact: number;
+  gasEstimate: string;
+  route: string;
+  source: 'live' | 'mock';
 }
 
 export type ENSTier = 'strong' | 'neutral' | 'weak';
