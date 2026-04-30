@@ -25,47 +25,30 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 export class ENSAdapter {
   private readonly rpcClients = RPC_ENDPOINTS.map((rpc) => ({
     rpc,
-    client: createPublicClient({
-      chain: mainnet,
-      transport: http(rpc),
-    }),
+    client: createPublicClient({ chain: mainnet, transport: http(rpc) }),
   }));
 
   private readonly client = this.rpcClients[0]!.client;
-
   private cache: Record<string, ENSCacheEntry> = {};
   private addressFetchedAt: Record<string, number> = {};
   private recordsFetchedAt: Record<string, number> = {};
 
   async resolveName(name: string): Promise<string | null> {
-    if (!this.isValidEnsName(name)) {
-      console.warn('[ENSAdapter] resolveName skipped: invalid ENS name');
-      return null;
-    }
+    if (!this.isValidEnsName(name)) return null;
 
     const cacheKey = this.getCacheKey(name);
-    console.log(`[ENSAdapter] resolveName start: ${name}`);
-
-    if (!cacheKey) {
-      console.warn('[ENSAdapter] resolveName skipped: empty ENS name');
-      return null;
-    }
+    if (!cacheKey) return null;
 
     const cachedEntry = this.cache[cacheKey];
     if (cachedEntry && this.isFresh(this.addressFetchedAt[cacheKey])) {
-      console.log(`[ENS CACHE HIT] ${cacheKey}`);
       return cachedEntry.address;
     }
 
     try {
-      console.log(`[ENSAdapter] resolveName before viem: ${cacheKey}`);
       const address = await this.withRpcFallback<string | null>(
-        cacheKey,
-        'resolveName',
+        cacheKey, 'resolveName',
         (client) => client.getEnsAddress({ name: cacheKey })
       );
-      console.log('[ENS FIX CHECK] address:', cacheKey, address);
-      console.log(`[ENSAdapter] resolveName response: ${cacheKey} -> ${address ?? 'null'}`);
 
       this.cache[cacheKey] = {
         address: address ?? null,
@@ -73,40 +56,23 @@ export class ENSAdapter {
         timestamp: Date.now(),
       };
       this.addressFetchedAt[cacheKey] = Date.now();
-
       return address ?? null;
     } catch (error) {
-      console.error(`[ENSAdapter] resolveName error: ${cacheKey}`);
-      console.error(error);
-
-      this.cache[cacheKey] = {
-        address: null,
-        records: cachedEntry?.records ?? {},
-        timestamp: Date.now(),
-      };
+      console.error(`[ENS] resolveName failed: ${cacheKey}`, error instanceof Error ? error.message : error);
+      this.cache[cacheKey] = { address: null, records: cachedEntry?.records ?? {}, timestamp: Date.now() };
       this.addressFetchedAt[cacheKey] = Date.now();
-
       return null;
     }
   }
 
   async getTextRecords(name: string): Promise<Record<string, string>> {
-    if (!this.isValidEnsName(name)) {
-      console.warn('[ENSAdapter] getTextRecords skipped: invalid ENS name');
-      return {};
-    }
+    if (!this.isValidEnsName(name)) return {};
 
     const cacheKey = this.getCacheKey(name);
-    console.log(`[ENSAdapter] getTextRecords start: ${name}`);
-
-    if (!cacheKey) {
-      console.warn('[ENSAdapter] getTextRecords skipped: empty ENS name');
-      return {};
-    }
+    if (!cacheKey) return {};
 
     const cachedEntry = this.cache[cacheKey];
     if (cachedEntry && this.isFresh(this.recordsFetchedAt[cacheKey])) {
-      console.log(`[ENS CACHE HIT] ${cacheKey}`);
       return { ...cachedEntry.records };
     }
 
@@ -114,18 +80,12 @@ export class ENSAdapter {
     const recordEntries = await Promise.all(
       ENS_RECORD_KEYS.map(async (key) => {
         try {
-          console.log(`[ENSAdapter] getTextRecords fetch key: ${cacheKey} -> ${key}`);
           const value = await this.withRpcFallback<string | null>(
-            cacheKey,
-            `getTextRecords(${key})`,
+            cacheKey, `getTextRecords(${key})`,
             (client) => client.getEnsText({ name: cacheKey, key })
           );
-          console.log('[ENS FIX CHECK] text:', cacheKey, key, value);
-          console.log(`[ENSAdapter] getTextRecords key response: ${cacheKey} -> ${key} = ${value ?? 'null'}`);
           return [key, value] as const;
-        } catch (error) {
-          console.error(`[ENSAdapter] getTextRecords key error: ${cacheKey} -> ${key}`);
-          console.error(error);
+        } catch {
           return [key, null] as const;
         }
       })
@@ -137,16 +97,8 @@ export class ENSAdapter {
       }
     }
 
-    this.cache[cacheKey] = {
-      address: cachedEntry?.address ?? null,
-      records,
-      timestamp: Date.now(),
-    };
+    this.cache[cacheKey] = { address: cachedEntry?.address ?? null, records, timestamp: Date.now() };
     this.recordsFetchedAt[cacheKey] = Date.now();
-
-    console.log(
-      `[ENSAdapter] getTextRecords complete: ${cacheKey} keys=${Object.keys(records).join(',') || 'none'}`
-    );
     return { ...records };
   }
 
@@ -159,15 +111,12 @@ export class ENSAdapter {
   }
 
   private isFresh(timestamp: number | undefined): boolean {
-    if (timestamp === undefined) {
-      return false;
-    }
+    if (timestamp === undefined) return false;
     return Date.now() - timestamp < CACHE_DURATION_MS;
   }
 
   private async withRpcFallback<T>(
-    name: string,
-    label: string,
+    name: string, label: string,
     fn: (client: ReturnType<typeof createPublicClient>) => Promise<T>
   ): Promise<T | null> {
     const clientsToTry = [
@@ -177,28 +126,17 @@ export class ENSAdapter {
 
     for (let index = 0; index < clientsToTry.length; index++) {
       const { rpc, client } = clientsToTry[index]!;
-
       try {
-        return await withTimeout(
-          fn(client),
-          RPC_ATTEMPT_TIMEOUT_MS,
-          `${label}(${name}) via ${rpc}`
-        );
+        return await withTimeout(fn(client), RPC_ATTEMPT_TIMEOUT_MS, `${label}(${name}) via ${rpc}`);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const shortMessage = message.split('\n')[0] ?? message;
-        if (message.includes('timeout')) {
-          console.error(`[ENS TIMEOUT] ${label} ${name}`);
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes('timeout')) {
+          console.error(`[ENS] timeout: ${label} ${name}`);
         } else {
-          console.error(`[ENS ERROR] ${name} ${shortMessage}`);
-        }
-
-        if (index < clientsToTry.length - 1) {
-          console.warn('[ENS FALLBACK] trying next RPC');
+          console.error(`[ENS] error: ${name} ${msg.split('\n')[0]}`);
         }
       }
     }
-
     return null;
   }
 }
