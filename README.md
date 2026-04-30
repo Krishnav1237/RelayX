@@ -1,97 +1,80 @@
 # RelayX
 
-RelayX is a two-service TypeScript project for intent-centric DeFi execution:
+RelayX is an intent-centric DeFi execution engine. You tell it what you want — "get best yield on ETH" — and three AI agents collaborate to find the optimal protocol, assess risk using on-chain ENS reputation and AXL peer consensus, and execute the deposit. Every decision is traceable and explainable.
 
-1. **Backend (`backend/`)**: Express API that receives an intent, runs a multi-agent orchestration flow (yield discovery → risk review → execution), and returns a traceable response.
-2. **Frontend (`frontend/`)**: Next.js App Router UI with a landing page and dashboard that submits intents and visualizes orchestration traces.
+## How It Works
 
-AXL runs as standalone infrastructure. Runtime path is:
-**Frontend → Backend API → AXL Node** (frontend does not call AXL directly).
+1. **YieldAgent** fetches live APY data from DefiLlama, merges AXL peer suggestions, and selects the highest-yielding protocol.
+2. **RiskAgent** evaluates the selection using real ENS on-chain reputation data and AXL network peer consensus. If risk is too high, it rejects.
+3. On rejection, the system **retries** with the next-best protocol automatically.
+4. **ExecutorAgent** executes the approved deposit and broadcasts the result to the AXL network.
 
-## Repository Layout
+Every step produces a structured trace entry, so the entire decision process is auditable.
 
-```text
-RelayX/
-├── backend/                 # Express + TypeScript API
-├── frontend/                # Next.js + React UI
-├── docs/                    # Deep project documentation
-├── nodemon.json             # Root nodemon config (watch settings)
-└── package-lock.json        # Root lockfile (no root package scripts)
-```
+## Key Integrations
+
+| Integration | What It Does | Data Source |
+|---|---|---|
+| **DefiLlama** | Live DeFi yield data | `https://yields.llama.fi/pools` |
+| **ENS** | On-chain reputation scoring | Ethereum mainnet via viem |
+| **AXL** | Peer-to-peer agent consensus | Multi-node HTTP network |
+| **OpenAI** (optional) | LLM-enhanced reasoning | `OPENAI_API_KEY` |
+
+All integrations degrade gracefully. If any external service is down, the system continues with fallback data.
 
 ## Quick Start
 
-### 1) Configure backend environment
+```bash
+# 1. Set environment (ENS requires Alchemy RPC)
+export ALCHEMY_MAINNET_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/<key>"
 
-RelayX backend reads:
+# 2. Backend
+cd backend && npm install && npm run dev    # port 3001
 
-- `ALCHEMY_MAINNET_RPC_URL` (required for live ENS resolution)
-- `AXL_BASE_URL` (optional, defaults to `http://localhost:3005`)
+# 3. Frontend
+cd frontend && npm install && npm run dev   # port 3000
+
+# 4. Tests (92 tests)
+cd backend && npm test
+```
+
+## API
 
 ```bash
-export ALCHEMY_MAINNET_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/<your-key>"
-export AXL_BASE_URL="http://localhost:3005"
+# Health checks
+curl http://localhost:3001/health
+curl http://localhost:3001/axl-health
+curl http://localhost:3001/yield-health
+curl http://localhost:3001/ens-health
+
+# Execute intent
+curl -X POST http://localhost:3001/execute \
+  -H "Content-Type: application/json" \
+  -d '{"intent":"get best yield on ETH"}'
+
+# Demo mode (guaranteed retry path)
+curl -X POST http://localhost:3001/execute \
+  -H "Content-Type: application/json" \
+  -d '{"intent":"get best yield on ETH","context":{"demo":true}}'
 ```
 
-### 2) Start AXL node (mock for local dev)
+## Repository Layout
 
-```bash
-cd backend
-npm install
-npm run axl:mock
 ```
-
-AXL mock listens on `http://localhost:3005`.
-If you run a real AXL node, set `AXL_BASE_URL` to that endpoint instead.
-
-### 3) Start backend
-
-```bash
-cd backend
-npm run dev
+RelayX/
+├── backend/           # Express + TypeScript API
+│   ├── src/
+│   │   ├── orchestrator/    # ExecutionService
+│   │   ├── agents/          # YieldAgent, RiskAgent, ExecutorAgent
+│   │   ├── adapters/        # ENS, AXL, DefiLlama, LLM adapters
+│   │   ├── controllers/     # Express route handlers
+│   │   ├── types/           # TypeScript interfaces (zero any)
+│   │   └── __tests__/       # 92 tests (vitest)
+│   └── scripts/             # AXL mock node
+├── frontend/          # Next.js UI
+└── docs/              # Documentation
 ```
-
-Backend listens on `http://localhost:3001`.
-AXL health probe is available at `http://localhost:3001/axl-health`.
-
-### 4) Start frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Frontend runs on `http://localhost:3000` and rewrites `/api/*` to the backend (`http://localhost:3001/*`).
-
-## Core API
-
-- `GET /health` → `{ "status": "ok" }`
-- `POST /execute` with:
-
-```json
-{
-  "intent": "Find the safest yield for 1000 USDC",
-  "context": {}
-}
-```
-
-Returns:
-
-- full agent trace (`trace`)
-- execution output (`final_result`)
-- summary (`summary`)
-- debug metadata (`debug`)
 
 ## Documentation
 
-Detailed docs are in `docs/`:
-
-- `docs/README.md` (documentation index)
-- `docs/architecture.md`
-- `docs/backend.md`
-- `docs/frontend.md`
-- `docs/api-reference.md`
-- `docs/development-runbook.md`
-- `docs/current-limitations.md`
-- `docs/repository-map.md`
+See [`docs/`](docs/README.md) for architecture, API reference, backend deep dive, and development runbook.

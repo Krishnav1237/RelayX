@@ -6,6 +6,10 @@ function normalizeConfidence(value: number): number {
   return Math.round(Math.max(0, Math.min(1, value)) * 100) / 100;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 export class ExecutorAgent extends BaseAgent {
   private axlAdapter = new AXLAdapter();
 
@@ -23,14 +27,10 @@ export class ExecutorAgent extends BaseAgent {
     const confidence = normalizeConfidence(0.9);
     let ts = timestamp;
 
-    // Step: execute
-    trace.push(this.log('execute', `Executing deposit on ${plan.protocol} (${plan.apy}% APY)`, {
-      protocol: plan.protocol,
-      apy: plan.apy,
-      action: 'deposit',
-      attempt,
-      confidence,
-    }, ts, externalMetadata));
+    trace.push(this.log('execute',
+      `Executing deposit on ${plan.protocol} (${plan.apy}% APY)`,
+      { protocol: plan.protocol, apy: plan.apy, action: 'deposit', attempt, confidence },
+      ts, externalMetadata));
     ts += 10;
 
     const result: ExecutionResult = {
@@ -41,46 +41,36 @@ export class ExecutorAgent extends BaseAgent {
       attempt,
     };
 
-    // Step: execution complete
-    trace.push(this.log('execute', `Deposit successful. Funds now generating yield at ${plan.apy}% APY.`, {
-      protocol: result.protocol,
-      apy: result.apy,
-      action: result.action,
-      attempt,
-      confidence,
-    }, ts, externalMetadata));
+    trace.push(this.log('execute',
+      `Deposit successful. Funds now generating yield at ${plan.apy}% APY.`,
+      { protocol: result.protocol, apy: result.apy, action: result.action, attempt, confidence },
+      ts, externalMetadata));
     ts += 10;
 
+    // AXL broadcast — fire and forget for execution signal
     const axlMessage: AXLMessage = {
       from: this.name,
       to: 'axl.network',
       type: 'execution_signal',
-      payload: {
-        protocol: result.protocol,
-        apy: result.apy,
-        status: result.status,
-        attempt,
-      },
+      payload: { protocol: result.protocol, apy: result.apy, status: result.status, attempt },
       timestamp: Date.now(),
     };
-
-    trace.push(this.log('execute', 'Broadcasting execution signal to AXL network', {
-      requestType: axlMessage.type,
-    }, ts, externalMetadata));
-    ts += 10;
 
     let remoteResponses: unknown[] = [];
     try {
       remoteResponses = await this.axlAdapter.broadcast(axlMessage);
-    } catch (error) {
-      console.error('[ExecutorAgent] AXL broadcast failed');
-      console.error(error);
+    } catch {
       remoteResponses = [];
     }
 
-    trace.push(this.log('execute', `AXL peers acknowledged execution (${remoteResponses.length} responses)`, {
-      peersContacted: remoteResponses.length,
-    }, ts, externalMetadata));
+    const isSimulated = remoteResponses.length > 0 &&
+      remoteResponses.every(r => isRecord(r) && r.simulatedPeer === true);
+    const sourceLabel = isSimulated ? 'AXL fallback (simulated peers)' : 'AXL live peers';
+
+    trace.push(this.log('execute',
+      `${sourceLabel}: ${remoteResponses.length} acknowledged execution`,
+      { peersContacted: remoteResponses.length, isSimulated },
+      ts, externalMetadata));
 
     return { result, confidence };
   }

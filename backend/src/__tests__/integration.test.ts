@@ -1,55 +1,61 @@
 import { describe, it, expect } from 'vitest';
 import { ExecutionService } from '../orchestrator/ExecutionService';
 
-describe('Full Integration - Retry Path', () => {
+describe('Full Integration', () => {
   const service = new ExecutionService();
 
-  it('should demonstrate complete retry flow: Morpho rejected → Aave approved', async () => {
-    const response = await service.execute({ intent: 'get best yield on ETH' });
+  it('should complete full execution flow with live data', async () => {
+    const r = await service.execute({ intent: 'get best yield on ETH' });
 
-    // 1. Verify retry happened
-    expect(response.summary.wasRetried).toBe(true);
+    // Core response shape
+    expect(r.intent).toBe('get best yield on ETH');
+    expect(r.trace.length).toBeGreaterThan(0);
+    expect(r.final_result).toBeDefined();
+    expect(r.final_result.status).toBe('success');
+    expect(r.final_result.action).toBe('deposit');
+    expect(r.final_result.protocol.length).toBeGreaterThan(0);
+    expect(r.summary).toBeDefined();
 
-    // 2. Verify initial selection was Morpho (highest APY)
-    expect(response.summary.initialProtocol).toBe('Morpho');
+    // Summary fields
+    expect(r.summary.initialProtocol.length).toBeGreaterThan(0);
+    expect(r.summary.finalProtocol.length).toBeGreaterThan(0);
+    expect(typeof r.summary.wasRetried).toBe('boolean');
+    expect(typeof r.summary.confidence).toBe('number');
+    expect(r.summary.confidence).toBeGreaterThan(0);
+    expect(r.summary.confidence).toBeLessThanOrEqual(1);
+    expect(r.summary.explanation.length).toBeGreaterThan(0);
 
-    // 3. Verify final selection is Aave (safe alternative)
-    expect(response.summary.finalProtocol).toBe('Aave');
+    // Decision impact
+    expect(r.summary.decisionImpact).toBeDefined();
+    expect(r.summary.decisionImpact.ens.length).toBeGreaterThan(0);
+    expect(r.summary.decisionImpact.axl.length).toBeGreaterThan(0);
 
-    // 4. Verify final result matches
-    expect(response.final_result.protocol).toBe('Aave');
-    expect(response.final_result.status).toBe('success');
-    expect(response.final_result.action).toBe('deposit');
-
-    // 5. Verify trace has retry step
-    const retryEntry = response.trace.find(t => t.step === 'retry');
-    expect(retryEntry).toBeDefined();
-    expect(retryEntry!.agent).toBe('system.relay.eth');
-
-    // 6. Verify explanation mentions the switch
-    expect(response.summary.explanation).toContain('Initially selected Morpho');
-    expect(response.summary.explanation).toContain('switched to Aave');
-
-    // 7. Verify confidence breakdown exists and is reasonable
-    const debug = response.debug as Record<string, unknown>;
+    // Confidence breakdown
+    const debug = r.debug as Record<string, unknown>;
     const breakdown = debug.confidenceBreakdown as Record<string, number>;
     expect(breakdown.yield).toBeGreaterThan(0);
     expect(breakdown.risk).toBeGreaterThan(0);
     expect(breakdown.execution).toBe(0.9);
 
-    // 8. Verify all timestamps are strictly increasing
-    for (let i = 1; i < response.trace.length; i++) {
-      expect(response.trace[i]!.timestamp).toBeGreaterThanOrEqual(
-        response.trace[i - 1]!.timestamp
-      );
+    // Timestamps strictly increasing
+    for (let i = 1; i < r.trace.length; i++) {
+      expect(r.trace[i]!.timestamp).toBeGreaterThanOrEqual(r.trace[i - 1]!.timestamp);
     }
 
-    // 9. Print trace for visual verification
-    console.log('\n=== FULL TRACE ===');
-    for (const entry of response.trace) {
-      console.log(`[${entry.agent}] ${entry.step} → ${entry.message}`);
+    // Only valid agent names
+    const validNames = ['yield.relay.eth', 'risk.relay.eth', 'executor.relay.eth', 'system.relay.eth'];
+    for (const e of r.trace) {
+      expect(validNames).toContain(e.agent);
     }
+
+    // Trace starts with system
+    expect(r.trace[0]!.agent).toBe('system.relay.eth');
+    expect(r.trace[0]!.step).toBe('start');
+
+    // Print trace for visual verification
+    console.log('\n=== TRACE ===');
+    for (const e of r.trace) console.log(`[${e.agent}] ${e.step} → ${e.message}`);
     console.log('\n=== SUMMARY ===');
-    console.log(JSON.stringify(response.summary, null, 2));
+    console.log(JSON.stringify(r.summary, null, 2));
   });
 });

@@ -16,6 +16,26 @@ export interface ExecutionResult {
   attempt?: number;
 }
 
+export type ENSTier = 'strong' | 'neutral' | 'weak';
+export type AXLDecisionImpact = 'boost' | 'penalty' | 'retry' | 'none';
+
+export interface ENSInfluence {
+  tier: ENSTier;
+  reputationScore: number;
+  effect: 'increased tolerance' | 'decreased tolerance' | 'none';
+}
+
+export interface AXLInfluence {
+  approvalRatio: number;
+  decisionImpact: AXLDecisionImpact;
+  isSimulated: boolean;
+}
+
+export interface DecisionImpact {
+  ens: string;
+  axl: string;
+}
+
 export interface ExecutionSummary {
   selectedProtocol: string;
   initialProtocol: string;
@@ -25,6 +45,7 @@ export interface ExecutionSummary {
   totalSteps: number;
   confidence: number;
   explanation: string;
+  decisionImpact: DecisionImpact;
 }
 
 export interface ExecutionRequest {
@@ -32,6 +53,8 @@ export interface ExecutionRequest {
   context?: {
     ens?: string;
     wallet?: string;
+    demo?: boolean;
+    debug?: boolean;
   };
 }
 
@@ -61,12 +84,8 @@ export interface RiskReviewResult {
   reasoning: string;
   riskScore?: number;
   flags?: string[];
-  ensInfluence?: {
-    reputationScore: number;
-    sources: string[];
-    primarySource: string;
-    impact: 'increased confidence' | 'decreased confidence';
-  };
+  ensInfluence?: ENSInfluence;
+  axlInfluence?: AXLInfluence;
 }
 
 export interface ENSReputationContext {

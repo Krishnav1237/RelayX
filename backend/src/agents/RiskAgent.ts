@@ -1,14 +1,26 @@
 import { BaseAgent } from './BaseAgent';
-import { AXLMessage, AgentTrace, ENSReputationContext, RiskReviewResult, YieldOption } from '../types';
+import { AXLInfluence, AXLMessage, AgentTrace, ENSInfluence, ENSReputationContext, ENSTier, RiskReviewResult, YieldOption } from '../types';
 import { AXLAdapter } from '../adapters/AXLAdapter';
+import { ReasoningAdapter } from '../adapters/ReasoningAdapter';
 
 function normalizeConfidence(value: number): number {
-  // Cap at 0.95 for risk agent - never return 1.0
   return Math.round(Math.max(0, Math.min(0.95, value)) * 100) / 100;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function getENSTier(score: number, hasContext: boolean): ENSTier {
+  if (!hasContext) return 'neutral';
+  if (score >= 0.9) return 'strong';
+  if (score < 0.7) return 'weak';
+  return 'neutral';
 }
 
 export class RiskAgent extends BaseAgent {
   private axlAdapter = new AXLAdapter();
+  private reasoningAdapter = new ReasoningAdapter();
 
   constructor() {
     super('risk.relay.eth', 'risk.relay.eth');
@@ -20,213 +32,177 @@ export class RiskAgent extends BaseAgent {
     timestamp: number,
     externalMetadata?: Record<string, unknown>,
     ensContext?: ENSReputationContext
-  ): Promise<{ result: RiskReviewResult; confidence: number }> {
+  ): Promise<{ result: RiskReviewResult; confidence: number; axlInfluence: AXLInfluence; ensInfluence: ENSInfluence }> {
     let ts = timestamp;
-    const reputationScore = this.normalizeReputationScore(ensContext?.reputationScore ?? 0.5);
-    const sources = ensContext?.sources ?? [];
-    const primarySource = sources[0] ?? 'unknown';
-    const hasENSContext = ensContext !== undefined;
-    const hasStrongENS = hasENSContext && reputationScore > 0.85;
-    const hasWeakENS = hasENSContext && reputationScore < 0.7;
-    const ensInfluence = this.getENSInfluence(reputationScore, sources, primarySource, hasStrongENS, hasWeakENS);
+    const reputationScore = this.normalizeScore(ensContext?.reputationScore ?? 0.5);
+    const ensTier = getENSTier(reputationScore, ensContext !== undefined);
 
-    // ENS adjusts threshold but medium+high APY is ALWAYS rejected (>= not >)
-    const mediumRiskApyThreshold = hasStrongENS
-      ? 4.55
-      : hasWeakENS
-        ? 4.2
-        : 4.5;
+    const mediumRiskApyThreshold = ensTier === 'strong' ? 4.55
+      : ensTier === 'weak' ? 4.4
+      : 4.5;
 
-    // Step: review start
-    trace.push(this.log('review', `Reviewing risk profile for ${plan.protocol} (${plan.apy}% APY)`, {
-      apy: plan.apy,
-      riskLevel: plan.riskLevel,
-      ...(ensInfluence ? { ensInfluence } : {}),
-    }, ts, externalMetadata));
+    const ensInfluence: ENSInfluence = {
+      tier: ensTier,
+      reputationScore,
+      effect: ensTier === 'strong' ? 'increased tolerance'
+        : ensTier === 'weak' ? 'decreased tolerance'
+        : 'none',
+    };
+
+    // Step: review start with ENS context
+    trace.push(this.log('review',
+      `Reviewing ${plan.protocol} (${plan.apy}% APY, ${plan.riskLevel ?? 'unknown'} risk) — ENS tier: ${ensTier} (${reputationScore.toFixed(2)})`,
+      { apy: plan.apy, riskLevel: plan.riskLevel, ensInfluence },
+      ts, externalMetadata));
     ts += 10;
 
     const flags: string[] = [];
     let riskScore = 0;
     let confidenceAdjustment = 0;
 
-    // Base risk from APY + risk level — use >= to ensure boundary values are caught
+    // Base risk scoring
     if (plan.riskLevel === 'high') {
       flags.push('Protocol has high risk profile');
       riskScore += 60;
     } else if (plan.riskLevel === 'medium' && plan.apy >= mediumRiskApyThreshold) {
-      flags.push(
-        `Medium risk with APY (${plan.apy}%) exceeds ENS-adjusted threshold (${mediumRiskApyThreshold}%)`
-      );
+      flags.push(`Medium risk with APY (${plan.apy}%) exceeds ENS-adjusted threshold (${mediumRiskApyThreshold}%)`);
       riskScore += 40;
     } else if (plan.riskLevel === 'medium') {
       riskScore += 20;
+      // Task 2: If medium risk and APY is very close to threshold, add extra scrutiny
+      if (plan.apy >= mediumRiskApyThreshold - 0.2) {
+        flags.push(`Medium risk APY (${plan.apy}%) approaching threshold (${mediumRiskApyThreshold}%)`);
+        riskScore += 15;
+      }
     }
 
-    // ENS reputation influence
-    if (hasWeakENS) {
-      flags.push(`Weak ENS reputation signals (${reputationScore.toFixed(2)})`);
-      riskScore += 15;
-      confidenceAdjustment -= 0.12;
-    } else if (hasStrongENS) {
+    // ENS influence on confidence — clear +/- 0.1
+    if (ensTier === 'strong') {
       riskScore = Math.max(0, riskScore - 5);
-      confidenceAdjustment += 0.04;
+      confidenceAdjustment += 0.1;
+    } else if (ensTier === 'weak') {
+      flags.push(`Weak ENS reputation (${reputationScore.toFixed(2)})`);
+      riskScore += 15;
+      confidenceAdjustment -= 0.1;
     }
 
+    // AXL consensus
     const axlMessage: AXLMessage = {
       from: this.name,
       to: 'axl.network',
       type: 'risk_request',
-      payload: {
-        protocol: plan.protocol,
-        apy: plan.apy,
-        riskLevel: plan.riskLevel ?? 'unknown',
-      },
+      payload: { protocol: plan.protocol, apy: plan.apy, riskLevel: plan.riskLevel ?? 'unknown' },
       timestamp: Date.now(),
     };
-
-    trace.push(this.log('review', 'Broadcasting risk assessment to AXL network', {
-      requestType: axlMessage.type,
-    }, ts, externalMetadata));
-    ts += 10;
 
     let remoteResponses: unknown[] = [];
     try {
       remoteResponses = await this.axlAdapter.broadcast(axlMessage);
-    } catch (error) {
-      console.error('[RiskAgent] AXL broadcast failed');
-      console.error(error);
+    } catch {
       remoteResponses = [];
     }
 
     const consensus = this.extractConsensus(remoteResponses);
+    const approvalRatio = consensus.total > 0 ? consensus.approve / consensus.total : 0.5;
 
-    trace.push(this.log('review', `AXL consensus: ${consensus.approve}/${consensus.total} peers approved`, {
-      peersContacted: remoteResponses.length,
-      approved: consensus.approve,
-      rejected: consensus.reject,
-    }, ts, externalMetadata));
-    ts += 10;
-
+    // AXL influence — clear thresholds
+    let axlDecisionImpact: AXLInfluence['decisionImpact'] = 'none';
     if (consensus.total > 0) {
-      if (consensus.approve > consensus.reject) {
-        confidenceAdjustment += 0.03;
-      } else if (consensus.reject > consensus.approve) {
-        confidenceAdjustment -= 0.03;
+      if (approvalRatio >= 0.7) {
+        confidenceAdjustment += 0.1;
+        axlDecisionImpact = 'boost';
+      } else if (approvalRatio < 0.3) {
+        confidenceAdjustment -= 0.1;
+        axlDecisionImpact = 'penalty';
       }
     }
 
-    // Decision based on riskScore threshold
-    const decision: 'approve' | 'reject' = riskScore >= 35 ? 'reject' : 'approve';
-    const confidenceBase = decision === 'approve' ? 0.9 : 0.55;
-    const confidence = normalizeConfidence(confidenceBase - (riskScore / 250) + confidenceAdjustment);
-    const reasoning = this.buildReasoning({
-      plan,
-      decision,
-      reputationScore,
-      primarySource,
-      flags,
-    });
+    const axlInfluence: AXLInfluence = {
+      approvalRatio: Math.round(approvalRatio * 100) / 100,
+      decisionImpact: axlDecisionImpact,
+      isSimulated: false,
+    };
 
-    // Step: final decision
+    // Task 3: AXL trace — clear about empty vs live
+    const hasAXLPeers = consensus.total > 0;
+    const axlImpactLabel = axlDecisionImpact === 'boost' ? '→ boosting confidence'
+      : axlDecisionImpact === 'penalty' ? '→ reducing confidence'
+      : '';
+    const axlTraceMsg = hasAXLPeers
+      ? `AXL live peers: ${consensus.approve}/${consensus.total} approved ${axlImpactLabel}`.trim()
+      : 'AXL: no peers available — proceeding with local decision';
+    trace.push(this.log('review', axlTraceMsg, { axlInfluence }, ts, externalMetadata));
+    ts += 10;
+
+    // Decision
+    const decision: 'approve' | 'reject' = riskScore >= 35 ? 'reject' : 'approve';
+    const confidenceBase = decision === 'approve' ? 0.85 : 0.5;
+    let confidence = normalizeConfidence(confidenceBase - (riskScore / 250) + confidenceAdjustment);
+
+    // Phase 6: Optional LLM confidence blending
+    // Phase 6: Optional LLM confidence blending
+    if (this.reasoningAdapter.isEnabled()) {
+      const llmResult = await this.reasoningAdapter.evaluateRisk(plan, reputationScore);
+      if (llmResult !== null) {
+        confidence = normalizeConfidence(confidence * 0.7 + llmResult.confidence * 0.3);
+        trace.push(this.log('review',
+          `LLM reasoning applied (confidence adjusted to ${confidence})`,
+          { llmConfidence: llmResult.confidence, llmReasoning: llmResult.reasoning, blendedConfidence: confidence },
+          ts, externalMetadata));
+        ts += 10;
+      }
+    }
+
+    // Build reasoning with explicit ENS + AXL mentions
+    const reasoning = this.buildReasoning(plan, decision, ensTier, reputationScore, flags);
+
     trace.push(this.log('review', reasoning, {
-      apy: plan.apy,
-      riskScore,
+      riskScore, decision, confidence, ensInfluence, axlInfluence,
       flags: flags.length > 0 ? flags : undefined,
-      decision,
-      confidence,
-      ...(ensInfluence ? { ensInfluence } : {}),
     }, ts, externalMetadata));
 
     return {
-      result: {
-        decision,
-        reasoning,
-        riskScore,
-        flags: flags.length > 0 ? flags : undefined,
-        ...(ensInfluence ? { ensInfluence } : {}),
-      },
+      result: { decision, reasoning, riskScore, flags: flags.length > 0 ? flags : undefined, ensInfluence, axlInfluence },
       confidence,
+      axlInfluence,
+      ensInfluence,
     };
   }
 
-  private extractConsensus(responses: unknown[]): {
-    approve: number;
-    reject: number;
-    total: number;
-  } {
+  private extractConsensus(responses: unknown[]): { approve: number; reject: number; total: number } {
     let approve = 0;
     let reject = 0;
-
     for (const response of responses) {
       if (!isRecord(response)) continue;
-      const decision = typeof response.decision === 'string'
-        ? response.decision
-        : isRecord(response.payload) && typeof response.payload.decision === 'string'
-          ? response.payload.decision
-          : undefined;
-
-      if (decision === 'approve') {
-        approve++;
-      } else if (decision === 'reject') {
-        reject++;
-      }
+      const d = typeof response.decision === 'string' ? response.decision
+        : isRecord(response.payload) && typeof response.payload.decision === 'string' ? response.payload.decision
+        : undefined;
+      if (d === 'approve') approve++;
+      else if (d === 'reject') reject++;
     }
-
     return { approve, reject, total: approve + reject };
   }
 
-  private normalizeReputationScore(value: number): number {
+  private normalizeScore(value: number): number {
     if (!Number.isFinite(value)) return 0.5;
     return Math.round(Math.max(0, Math.min(1, value)) * 100) / 100;
   }
 
-  private getENSInfluence(
+  private buildReasoning(
+    plan: YieldOption,
+    decision: 'approve' | 'reject',
+    ensTier: ENSTier,
     reputationScore: number,
-    sources: string[],
-    primarySource: string,
-    hasStrongENS: boolean,
-    hasWeakENS: boolean
-  ): RiskReviewResult['ensInfluence'] | undefined {
-    if (!hasStrongENS && !hasWeakENS) return undefined;
-    return {
-      reputationScore,
-      sources,
-      primarySource,
-      impact: hasStrongENS ? 'increased confidence' : 'decreased confidence',
-    };
-  }
-
-  private buildReasoning(params: {
-    plan: YieldOption;
-    decision: 'approve' | 'reject';
-    reputationScore: number;
-    primarySource: string;
-    flags: string[];
-  }): string {
-    const { plan, decision, reputationScore, primarySource, flags } = params;
-    const riskLevel = plan.riskLevel ?? 'unknown';
-    const sourceClause = `primarily influenced by ${primarySource}`;
-
-    if (decision === 'reject' && reputationScore < 0.7) {
-      return `Rejected ${plan.protocol} due to ${riskLevel} risk and weak ENS reputation signals (${reputationScore.toFixed(2)}) ${sourceClause}`;
-    }
+    flags: string[]
+  ): string {
+    const risk = plan.riskLevel ?? 'unknown';
+    const ensLabel = ensTier === 'strong' ? `strong ENS backing (${reputationScore.toFixed(2)})`
+      : ensTier === 'weak' ? `weak ENS reputation (${reputationScore.toFixed(2)})`
+      : `neutral ENS (${reputationScore.toFixed(2)})`;
 
     if (decision === 'reject') {
-      return `Rejected ${plan.protocol}: ${flags.join('; ')} ${sourceClause}`;
+      return `Rejected ${plan.protocol} due to ${risk} risk and ${ensLabel}. Flags: ${flags.join('; ')}`;
     }
-
-    if (decision === 'approve' && reputationScore > 0.85 && riskLevel === 'medium') {
-      return `Approved ${plan.protocol} due to strong ENS reputation (${reputationScore.toFixed(2)}) allowing slightly higher risk tolerance ${sourceClause}`;
-    }
-
-    if (decision === 'approve' && reputationScore > 0.85) {
-      return `Approved ${plan.protocol} due to ${riskLevel} risk and strong ENS reputation (${reputationScore.toFixed(2)}) ${sourceClause}`;
-    }
-
-    return `Approved ${plan.protocol} due to ${riskLevel} risk and ENS reputation (${reputationScore.toFixed(2)}) ${sourceClause}`;
+    return `Approved ${plan.protocol} due to ${risk} risk and ${ensLabel}`;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }

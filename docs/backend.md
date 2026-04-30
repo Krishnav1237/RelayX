@@ -1,136 +1,172 @@
-# Backend Deep Dive (`backend/`)
+# Backend Deep Dive
 
-## 1) Stack and Build
+## Stack
 
-- **Runtime**: Node.js
-- **Language**: TypeScript (strict mode enabled)
+- **Runtime**: Node.js + TypeScript (strict mode, zero `any`)
 - **Framework**: Express 5
-- **Dev run**: `npm run dev` (`nodemon src/index.ts`)
-- **Build**: `npm run build` (`tsc`)
-- **Output**: `dist/`
+- **Testing**: Vitest (92 tests across 11 files)
+- **ENS**: viem + Alchemy RPC (real Ethereum mainnet)
+- **Yield Data**: DefiLlama API (live, cached, with fallback)
+- **AXL**: Multi-node HTTP adapter (3 nodes, parallel broadcast)
+- **LLM**: Optional OpenAI integration (safe mode, never overrides)
 
-## 2) Entry Point and Routing
+## Entry Point (`src/index.ts`)
 
-File: `src/index.ts`
+- Express server on port 3001
+- Boot logging: ENS RPC status, AXL base URL, LLM enabled/disabled
+- Routes:
+  - `GET /health` — uptime check
+  - `GET /axl-health` — pings all 3 AXL nodes, returns `{ status, nodesReachable }`
+  - `GET /yield-health` — tests DefiLlama fetch, returns `{ status, source, protocols }`
+  - `GET /ens-health` — resolves vitalik.eth, returns `{ status, addressResolved }`
+  - `POST /execute` — main orchestration endpoint
 
-- Creates Express app.
-- Enables JSON parsing with `express.json()`.
-- Exposes:
-  - `GET /health` → uptime health response.
-  - `GET /axl-health` → backend-side connectivity check for configured AXL node.
-  - `POST /execute` → orchestration endpoint.
-- Binds server on port `3001`.
-- Runs a startup ENS smoke check (`vitalik.eth`) for RPC diagnostics.
-- Reads `AXL_BASE_URL` (default `http://localhost:3005`) for infrastructure AXL connectivity.
+## Controller (`src/controllers/execute.controller.ts`)
 
-## 3) Controller Layer
+- Validates `intent` is a non-empty string
+- Passes optional `context` (ens, wallet, demo, debug) through
+- Returns 400 for invalid input, 500 for internal errors (no stack traces)
+- When `context.debug = true`: runs execution twice and logs determinism check
 
-File: `src/controllers/execute.controller.ts`
+## ExecutionService (`src/orchestrator/ExecutionService.ts`)
 
-`executeHandler(req, res)`:
+The core orchestration brain. Full pipeline:
 
-1. Reads `{ intent, context }` from request body.
-2. Validates `intent` is a non-empty string.
-3. Builds `ExecutionRequest`.
-4. Calls `ExecutionService.execute()`.
-5. Returns JSON response or 500 on thrown errors.
+### Phase 1: ENS Resolution
+1. Builds ENS source list: user ENS → wallet reverse lookup → fallback to vitalik.eth + defaults
+2. Resolves up to 3 sources in parallel
+3. Computes reputation score (boosted by github/twitter presence)
+4. If all ENS fails: neutral score (0.7), no penalties
 
-## 4) Orchestration Core
+### Phase 2: Agent Orchestration
+1. **YieldAgent.think()** — fetches live yield data, broadcasts to AXL, selects best option
+2. **RiskAgent.review()** — evaluates with ENS tiers + AXL consensus
+3. **Retry** — if rejected or AXL penalty, retries with next-best protocol
+4. **ExecutorAgent.execute()** — deposits and broadcasts execution signal
 
-File: `src/orchestrator/ExecutionService.ts`
+### Phase 3: Validation
+- Trace assertions: all 4 agents must appear, timestamps increasing
+- Output contract: protocol non-empty, APY ends with %, status valid, explanation > 10 chars
+- Confidence clamped to [0, 0.95]
+- If validation fails: corrective trace entry added
 
-`ExecutionService.execute(request)` performs the full pipeline:
+### Phase 4: Response Assembly
+- Computes average confidence from all three agents (direct return values)
+- Builds `decisionImpact` with explicit ENS and AXL descriptions
+- Returns `ExecutionResponse` with trace, result, summary, debug
 
-1. Builds dynamic ENS sources per request:
-   - primary: user-provided `context.ens` (when valid)
-   - optional: wallet reverse ENS via `context.wallet`
-   - optional: resolvable agent ENS identities (`yield.relay.eth`, `risk.relay.eth`)
-   - defaults/fallback: `ens.eth`, `nick.eth`, and `vitalik.eth` when no user ENS is provided
-   - deterministic source list with dedupe and max 3 entries
-2. Resolves the selected ENS sources once per request.
-3. Fetches deterministic reputation signals from on-chain ENS state:
-   - resolution success (address exists)
-   - text record availability (`description`, `url`, `com.twitter`, `com.github`)
-   - trusted-source weighting for known ENS sources
-4. Builds a global ENS reputation context (`sources`, `resolved`, `reputationScore`).
-5. Starts trace with `system.relay.eth`.
-6. Calls `YieldAgent.think(intent, attempt=1)`.
-7. Calls `RiskAgent.review(selectedOption)` with ENS reputation context.
-8. If rejected and retries remain:
-   - appends system retry trace
-   - runs `YieldAgent` again with `attempt=2`
-   - re-runs `RiskAgent`
-9. Appends final-plan trace.
-10. Calls `ExecutorAgent.execute(finalPlan, attempt)`.
-11. Appends completion trace.
-12. Computes final confidence from yield + risk + execution confidence values.
-13. Returns `ExecutionResponse` including `trace`, `final_result`, `summary`, and `debug`.
+## Agents
 
-## 5) Agent Modules
+### BaseAgent (`src/agents/BaseAgent.ts`)
+- Properties: `id`, `name` (ENS-style: `yield.relay.eth`, etc.)
+- `log()` method produces `AgentTrace` entries with timestamp and metadata merging
 
-### `src/agents/BaseAgent.ts`
+### YieldAgent (`src/agents/YieldAgent.ts`)
+- Fetches live yield data from `YieldDataAdapter` (DefiLlama)
+- Validates: APY 0-50, minimum 2 options, no empty protocols
+- Demo mode: ensures Morpho + Aave + Compound available
+- Broadcasts `yield_request` to AXL, merges remote options (local priority)
+- Selects by attempt index for deterministic retry
+- Optional LLM reasoning enhancement
+- Returns confidence (boosted +0.03 for live data, +0.05 for retry)
 
-Defines shared identity (`id`, `name`) and structured trace logging helper.
+### RiskAgent (`src/agents/RiskAgent.ts`)
+- ENS tiers: strong (≥0.9), neutral (0.7-0.9), weak (<0.7)
+- Strong ENS: +0.1 confidence, threshold 4.55
+- Weak ENS: -0.1 confidence, threshold 4.4, adds flag
+- Medium risk near threshold: extra scrutiny (+15 riskScore)
+- AXL consensus: ≥70% = +0.1 boost, <30% = -0.1 penalty
+- Optional LLM confidence blending (70/30 deterministic/LLM)
+- Decision: `riskScore >= 35` → reject
+- Returns `RiskReviewResult` + `confidence` + `ensInfluence` + `axlInfluence`
 
-### `src/agents/YieldAgent.ts`
+### ExecutorAgent (`src/agents/ExecutorAgent.ts`)
+- Simulated deposit execution (no on-chain calls yet)
+- Broadcasts `execution_signal` to AXL
+- Fixed confidence: 0.9
+- User-facing narrative: "Deposit successful. Funds now generating yield at X% APY."
 
-- Holds static protocol options.
-- Sorts options by APY descending.
-- Selects by attempt index (`attempt-1`) for deterministic fallback.
-- Emits analysis and evaluation traces with confidence metadata.
-- Broadcasts `yield_request` over AXL, merges remote suggestions, and deduplicates protocols.
+## Adapters
 
-### `src/agents/RiskAgent.ts`
+### YieldDataAdapter (`src/adapters/YieldDataAdapter.ts`)
+- **Source**: DefiLlama `https://yields.llama.fi/pools`
+- Filters: asset match, Ethereum chain, $1M+ TVL, APY 0-50%
+- Protocol risk mapping: Aave/Compound/Spark → low, Morpho/Yearn/Curve → medium
+- In-memory cache: 60-second TTL, keyed by asset
+- Fallback: last cached result → Aave + Compound minimal set
+- Timeout: 5 seconds
 
-- Reviews selected plan risk profile.
-- Produces a deterministic decision function across APY + `riskLevel` + ENS `reputationScore`.
-- Low ENS reputation score (<0.7) tightens rejection and lowers confidence.
-- High ENS reputation score (>0.85) increases confidence and allows medium-risk APY up to 4.6.
-- Emits `ensInfluence` metadata in risk trace entries.
-- Broadcasts `risk_request` over AXL and applies remote approval/rejection consensus to confidence.
+### ENSAdapter (`src/adapters/ENSAdapter.ts`)
+- Real Ethereum mainnet ENS resolution via viem
+- Resolves addresses + text records (description, url, twitter, github)
+- In-memory cache: 5-minute TTL
+- RPC fallback: Alchemy → Ankr
+- Per-call timeout: 1s per RPC attempt
 
-### `src/agents/ExecutorAgent.ts`
+### AXLAdapter (`src/adapters/AXLAdapter.ts`)
+- Multi-node: broadcasts to 3 nodes in parallel (`Promise.allSettled`)
+- Nodes: `AXL_BASE_URL`, `:3006`, `:3007`
+- No simulated responses — returns empty array when no nodes respond
+- Strict response validation: type guards for protocol, APY (0-50), decision values
+- Timeout: 1.5s per node
 
-- Emits execution start + completion trace entries.
-- Returns successful mock execution result.
-- Broadcasts execution outcome over AXL and records peer response metadata.
+### ReasoningAdapter (`src/adapters/ReasoningAdapter.ts`)
+- Optional OpenAI integration (requires `OPENAI_API_KEY`)
+- `explainYield()`: generates human-readable yield explanation
+- `evaluateRisk()`: returns `{ reasoning, confidence }` for blending
+- Strict validation: confidence must be finite number, reasoning non-empty
+- Timeout: 2 seconds. On failure: ignored completely.
+- LLM never overrides decisions, never triggers retries
 
-## 6) Types and Utility
+### Placeholder Adapters
+- `ExecutionAdapter.ts` — KeeperHub (future)
+- `MemoryAdapter.ts` — 0G storage (future)
+- `SwapAdapter.ts` — Uniswap (future)
 
-- `src/types/index.ts`: authoritative backend interfaces for request/response and agent outputs.
-- `src/utils/index.ts`: module-scoped logger helper around `console`.
+## Type System (`src/types/index.ts`)
 
-## 7) Adapter Layer (Current State)
+All types strict, zero `any`:
 
-Files in `src/adapters/`:
+| Type | Key Fields |
+|---|---|
+| `AgentTrace` | agent, step, message, metadata?, timestamp |
+| `ExecutionResult` | protocol, apy, action, status, attempt? |
+| `ExecutionSummary` | selectedProtocol, initialProtocol, finalProtocol, wasRetried, confidence, explanation, decisionImpact |
+| `ExecutionRequest` | intent, context? (ens, wallet, demo, debug) |
+| `ExecutionResponse` | intent, trace, final_result, summary, debug? |
+| `ENSInfluence` | tier (strong/neutral/weak), reputationScore, effect |
+| `AXLInfluence` | approvalRatio, decisionImpact (boost/penalty/retry/none), isSimulated |
+| `DecisionImpact` | ens (string), axl (string) |
+| `YieldOption` | protocol, apy, riskLevel? |
 
-- `ENSAdapter.ts` (implemented): viem-based Ethereum mainnet ENS resolution + text-record lookup + in-memory cache (5-minute TTL), using `ALCHEMY_MAINNET_RPC_URL`.
-- `AXLAdapter.ts` (implemented): local AXL node HTTP adapter (`AXL_BASE_URL` or `http://localhost:3005`) with safe timeout, error handling, and deterministic simulated peers when no live responses are available.
-- `ExecutionAdapter.ts` (KeeperHub placeholder)
-- `MemoryAdapter.ts` (0G storage placeholder)
-- `SwapAdapter.ts` (Uniswap placeholder)
+## Testing
 
-Execution orchestration resolves external ENS sources once per request and uses them as a reputation signal layer for risk decisions. Agents also exchange AXL messages (`yield_request`, `risk_request`, `execution_signal`) and include network-consensus trace metadata without blocking execution.
+92 tests across 11 files using Vitest:
 
-### AXL HTTP contract used by backend
+```bash
+cd backend && npm test
+```
 
-`AXLAdapter` calls:
+| Test File | Count | Coverage |
+|---|---|---|
+| BaseAgent.test.ts | 5 | Identity, logging, metadata merging |
+| YieldAgent.test.ts | 8 | Live data, selection, retry, asset extraction |
+| RiskAgent.test.ts | 12 | ENS tiers, AXL influence, approve/reject |
+| ExecutorAgent.test.ts | 6 | Result fields, confidence, narrative |
+| ExecutionService.test.ts | 11 | Full flow, retry, determinism, decisionImpact |
+| AXLAdapter.test.ts | 6 | Empty responses, graceful degradation |
+| YieldDataAdapter.test.ts | 4 | Live fetch, caching, fallback |
+| EdgeCases.test.ts | 13 | Boundaries, ENS tiers, confidence bounds |
+| integration.test.ts | 1 | Full end-to-end flow |
+| hardening.test.ts | 19 | Stability, demo mode, low data, validation |
+| verification.test.ts | 7 | All demo scenarios, output contract |
 
-- `POST /message` with `{ target, payload }`
-- `POST /broadcast` with `{ payload }`
+## Graceful Degradation
 
-Broadcast responses accepted by backend can be either:
-
-- `[]` (raw array), or
-- `{ responses: [] }`, or
-- `{ data: [] }`
-
-If no valid responses are returned (or request fails), adapter falls back to deterministic simulated peers.
-
-## 8) Configuration Files
-
-- `package.json`: backend scripts and dependencies.
-- `scripts/axl-mock-node.js`: local AXL mock node for development on port `3005`.
-- `tsconfig.json`: strict TS compiler settings, NodeNext module resolution.
-- `.gitignore`: ignores `node_modules`, `dist`, logs, env files.
-- `nodemon.json`: watches `src` with `.ts` extension.
+| Failure | Behavior |
+|---|---|
+| DefiLlama down | Returns cached data, then Aave+Compound fallback |
+| All AXL nodes down | Empty responses, no confidence change, clean trace |
+| ENS RPC down | Neutral reputation (0.7), no penalties |
+| LLM timeout/error | Ignored completely, deterministic logic only |
+| Malformed AXL data | Rejected by type guards, never trusted |

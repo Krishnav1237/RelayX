@@ -1,47 +1,37 @@
-# Current Limitations and Gaps
+# Current Limitations
 
-## 1) Frontend/Backend Agent Name Mismatch
+## 1. No On-Chain Execution
 
-Backend trace uses:
+ExecutorAgent returns a simulated success result. No actual token deposits, swaps, or blockchain transactions occur. The `ExecutionAdapter`, `MemoryAdapter`, and `SwapAdapter` are placeholders.
 
-- `yield.relay.eth`
-- `risk.relay.eth`
-- `executor.relay.eth`
+## 2. Frontend/Backend Agent Name Mismatch
 
-Frontend UI logic currently checks for:
+Backend uses ENS-style names (`yield.relay.eth`, `risk.relay.eth`, `executor.relay.eth`). Frontend UI may still reference older names. Sidebar indicators may not match trace data.
 
-- `yield.agent`
-- `risk.agent`
-- `executor.agent`
+## 3. APY Formatting
 
-Impact: sidebar activity indicators and badge styling for those agents can appear inconsistent with real trace data.
+Backend returns `final_result.apy` as `"4.2%"` (string with percent). Frontend should not append another `%`.
 
-## 2) APY Formatting Duplication in Dashboard
+## 4. No Shared Type Package
 
-Backend returns `final_result.apy` as a string with `%` (example: `"4.2%"`), while dashboard renders `response.final_result.apy + "%"`.
+Backend and frontend define execution interfaces separately. Contract drift is possible when response shape evolves.
 
-Impact: UI may show double percent values (example: `4.2%%`).
+## 5. DefiLlama Data Variability
 
-## 3) No Shared Type Package
+Live yield data changes constantly. The same intent may produce different protocol selections on different runs. Demo mode (`context.demo = true`) provides stable behavior for presentations.
 
-Backend and frontend each define execution interfaces separately.
+## 6. AXL Requires Local Nodes
 
-Impact: contract drift risk when response shape evolves.
+AXL broadcasts to `localhost:3005`, `:3006`, `:3007`. In most environments, these are not running, so AXL returns empty responses. The system works fine without AXL — it just doesn't get peer consensus influence.
 
-## 4) Partial Adapter Layer Coverage
+## 7. ENS Depends on RPC Availability
 
-`backend/src/adapters/ENSAdapter.ts` and `backend/src/adapters/AXLAdapter.ts` are integrated into the runtime path. `ExecutionAdapter`, `MemoryAdapter`, and `SwapAdapter` remain placeholders.
+ENS resolution requires a working Ethereum mainnet RPC. Without `ALCHEMY_MAINNET_RPC_URL`, it falls back to public RPCs which may be slow or rate-limited. If ENS fails entirely, the system uses neutral reputation (0.7).
 
-Impact: agent collaboration + ENS reputation signals are active, but execution still lacks on-chain swap/storage/automation adapters.
+## 8. LLM Is Optional
 
-## 5) Local AXL Defaults to Mock/Simulated Peers
+The ReasoningAdapter requires `OPENAI_API_KEY`. Without it, LLM reasoning is completely disabled. The system works identically without it — LLM only enhances explanations and slightly adjusts confidence.
 
-In local development, AXL commonly runs as the included mock node (or falls back to simulated peer responses when unreachable).
+## 9. DefiLlama Timeout
 
-Impact: useful for deterministic integration testing, but not equivalent to production multi-node peer discovery.
-
-## 6) Minimal Backend Test/Lint Surface
-
-Backend `package.json` has no functional test suite and no lint script.
-
-Impact: changes rely on manual verification and TypeScript compilation confidence.
+The DefiLlama pools endpoint returns a large payload. With a 5-second timeout, it may fail on slow connections. The system falls back to cached data or the Aave+Compound minimal set.

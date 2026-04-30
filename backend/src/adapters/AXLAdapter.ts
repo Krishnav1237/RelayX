@@ -1,69 +1,72 @@
 import { AXLMessage } from '../types';
 
-const AXL_BASE_URL = process.env.AXL_BASE_URL ?? 'http://localhost:3005';
-const AXL_TIMEOUT_MS = 2500;
-
-type BroadcastPayload = Record<string, unknown> | AXLMessage;
+const AXL_NODES = [
+  process.env.AXL_BASE_URL ?? 'http://localhost:3005',
+  'http://localhost:3006',
+  'http://localhost:3007',
+];
+const AXL_NODE_TIMEOUT_MS = 1500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+type BroadcastPayload = Record<string, unknown> | AXLMessage;
+
 export class AXLAdapter {
   async sendMessage(target: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const body = { target, payload };
-
     try {
-      const response = await this.postJson('/message', body);
-      if (isRecord(response)) {
-        return response;
-      }
-      return { acknowledged: false, simulatedPeer: true };
+      const response = await this.postJson(AXL_NODES[0]!, '/message', body);
+      if (isRecord(response)) return response;
+      return { acknowledged: false };
     } catch (error) {
-      console.error('[AXLAdapter] sendMessage failed');
-      console.error(error);
-      return {
-        acknowledged: false,
-        simulatedPeer: true,
-        error: error instanceof Error ? error.message : String(error),
-      };
+      console.error('[AXLAdapter] sendMessage failed:', error instanceof Error ? error.message : error);
+      return { acknowledged: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
   async broadcast(payload: BroadcastPayload): Promise<unknown[]> {
-    try {
-      const response = await this.postJson('/broadcast', { payload });
-      const responses = this.extractResponses(response);
-      if (responses.length > 0) {
-        return responses;
+    // Broadcast to ALL nodes in parallel
+    const results = await Promise.allSettled(
+      AXL_NODES.map(node => this.postJson(node, '/broadcast', { payload }))
+    );
+
+    const allResponses: unknown[] = [];
+    let peersContacted = 0;
+
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value !== null) {
+        peersContacted++;
+        const extracted = this.extractResponses(result.value);
+        for (const r of extracted) {
+          if (this.isValidResponse(r)) allResponses.push(r);
+        }
       }
-    } catch (error) {
-      console.error('[AXLAdapter] broadcast failed');
-      console.error(error);
     }
 
-    const simulated = this.simulateResponses(payload);
-    const messageType = this.getMessageType(payload);
-    console.warn(`[AXLAdapter] No live AXL responses for ${messageType}; using simulated peers.`);
-    return simulated;
+    if (allResponses.length > 0) {
+      console.log(`[AXLAdapter] broadcast: ${peersContacted} nodes responded, ${allResponses.length} valid responses`);
+    } else {
+      console.warn('[AXLAdapter] broadcast: no peers available');
+    }
+
+    return allResponses;
   }
 
-  private async postJson(path: string, body: Record<string, unknown>): Promise<unknown> {
+  private async postJson(baseUrl: string, path: string, body: Record<string, unknown>): Promise<unknown> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), AXL_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), AXL_NODE_TIMEOUT_MS);
 
     try {
-      const response = await fetch(`${AXL_BASE_URL}${path}`, {
+      const response = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
 
-      if (!response.ok) {
-        throw new Error(`AXL HTTP ${response.status} for ${path}`);
-      }
-
+      if (!response.ok) throw new Error(`AXL HTTP ${response.status} for ${baseUrl}${path}`);
       return await response.json();
     } finally {
       clearTimeout(timeout);
@@ -71,72 +74,35 @@ export class AXLAdapter {
   }
 
   private extractResponses(response: unknown): unknown[] {
-    if (Array.isArray(response)) {
-      return response;
-    }
-
+    if (Array.isArray(response)) return response;
     if (isRecord(response)) {
-      if (Array.isArray(response.responses)) {
-        return response.responses as unknown[];
-      }
-      if (Array.isArray(response.data)) {
-        return response.data as unknown[];
-      }
+      if (Array.isArray(response.responses)) return response.responses as unknown[];
+      if (Array.isArray(response.data)) return response.data as unknown[];
     }
-
     return [];
   }
 
-  private getMessageType(payload: unknown): AXLMessage['type'] {
-    if (isRecord(payload) && typeof payload.type === 'string') {
-      if (payload.type === 'yield_request' || payload.type === 'risk_request' || payload.type === 'execution_signal') {
-        return payload.type;
-      }
+  // Phase 4: Strict response validation
+  private isValidResponse(value: unknown): boolean {
+    if (!isRecord(value)) return false;
+
+    // Yield response: must have option with protocol + apy
+    if (isRecord(value.option)) {
+      const opt = value.option;
+      if (typeof opt.protocol !== 'string' || typeof opt.apy !== 'number') return false;
+      if (opt.apy <= 0 || opt.apy > 50) return false;
     }
 
-    return 'execution_signal';
-  }
-
-  private simulateResponses(payload: unknown): Record<string, unknown>[] {
-    const type = this.getMessageType(payload);
-
-    if (type === 'yield_request') {
-      return [
-        {
-          peer: 'simulated-peer-1',
-          simulatedPeer: true,
-          option: { protocol: 'Spark', apy: 4.15, riskLevel: 'low' },
-        },
-        {
-          peer: 'simulated-peer-2',
-          simulatedPeer: true,
-          option: { protocol: 'Yearn', apy: 3.9, riskLevel: 'low' },
-        },
-      ];
+    // Risk response: must have valid decision
+    if (typeof value.decision === 'string') {
+      if (value.decision !== 'approve' && value.decision !== 'reject') return false;
     }
 
-    if (type === 'risk_request') {
-      const message = isRecord(payload) && isRecord(payload.payload) ? payload.payload : {};
-      const riskLevel = typeof message.riskLevel === 'string' ? message.riskLevel : 'unknown';
-      const apy = typeof message.apy === 'number' ? message.apy : 0;
-      const rejectMajority = riskLevel === 'high' || (riskLevel === 'medium' && apy > 4.5);
-
-      return rejectMajority
-        ? [
-          { peer: 'simulated-peer-1', simulatedPeer: true, decision: 'reject', confidence: 0.76 },
-          { peer: 'simulated-peer-2', simulatedPeer: true, decision: 'reject', confidence: 0.72 },
-          { peer: 'simulated-peer-3', simulatedPeer: true, decision: 'approve', confidence: 0.58 },
-        ]
-        : [
-          { peer: 'simulated-peer-1', simulatedPeer: true, decision: 'approve', confidence: 0.79 },
-          { peer: 'simulated-peer-2', simulatedPeer: true, decision: 'approve', confidence: 0.74 },
-          { peer: 'simulated-peer-3', simulatedPeer: true, decision: 'reject', confidence: 0.57 },
-        ];
+    // Execution ack: must have acknowledged field
+    if ('acknowledged' in value) {
+      if (typeof value.acknowledged !== 'boolean') return false;
     }
 
-    return [
-      { peer: 'simulated-peer-1', simulatedPeer: true, acknowledged: true },
-      { peer: 'simulated-peer-2', simulatedPeer: true, acknowledged: true },
-    ];
+    return true;
   }
 }
