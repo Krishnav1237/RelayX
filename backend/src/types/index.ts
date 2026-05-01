@@ -12,7 +12,7 @@ export interface ExecutionResult {
   protocol: string;
   apy: string;
   action: string;
-  status: 'success' | 'failed';
+  status: 'pending_approval' | 'success' | 'failed';
   attempt?: number;
   swap?: UniswapQuoteResult;
 }
@@ -72,7 +72,17 @@ export interface ExecutionResponse {
   trace: AgentTrace[];
   final_result: ExecutionResult;
   summary: ExecutionSummary;
+  approval?: ExecutionApproval;
   debug?: Record<string, unknown>;
+}
+
+export interface ExecutionApproval {
+  id: string;
+  expiresAt: number;
+}
+
+export interface ExecutionApprovalRequest {
+  approvalId: string;
 }
 
 export interface YieldOption {

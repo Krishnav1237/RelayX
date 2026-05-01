@@ -7,7 +7,11 @@ interface ENSCacheEntry {
   timestamp: number;
 }
 
-const RPC_ENDPOINTS = ['https://eth-mainnet.g.alchemy.com/v2/pZEHBt4D9N1I1LQumNIFs', 'https://rpc.ankr.com/eth'] as const;
+const PUBLIC_RPC_ENDPOINTS = ['https://rpc.ankr.com/eth'] as const;
+const RPC_ENDPOINTS = [
+  process.env.ALCHEMY_MAINNET_RPC_URL,
+  ...PUBLIC_RPC_ENDPOINTS,
+].filter((rpc): rpc is string => typeof rpc === 'string' && rpc.trim().length > 0);
 const ENS_RECORD_KEYS = ['description', 'url', 'com.twitter', 'com.github'] as const;
 const CACHE_DURATION_MS = 5 * 60 * 1000;
 const ENS_TIMEOUT_MS = 2000;

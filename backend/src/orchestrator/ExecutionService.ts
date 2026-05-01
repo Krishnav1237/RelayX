@@ -1,4 +1,5 @@
-import { AgentTrace, AXLInfluence, DecisionImpact, ENSInfluence, ENSReputationContext, ExecutionRequest, ExecutionResponse, ExecutionResult, ExecutionSummary, YieldOption } from '../types';
+import { randomUUID } from 'crypto';
+import { AgentTrace, AXLInfluence, DecisionImpact, ENSInfluence, ENSReputationContext, ExecutionApproval, ExecutionRequest, ExecutionResponse, ExecutionResult, ExecutionSummary, UniswapQuoteResult, YieldOption } from '../types';
 import { YieldAgent } from '../agents/YieldAgent';
 import { RiskAgent } from '../agents/RiskAgent';
 import { ExecutorAgent } from '../agents/ExecutorAgent';
@@ -9,6 +10,7 @@ import { mainnet } from 'viem/chains';
 const SYSTEM_AGENT = 'system.relay.eth';
 const DEFAULT_ENS_SOURCES = ['ens.eth', 'nick.eth'] as const;
 const MAX_ENS_SOURCES = 3;
+const DEFAULT_MAINNET_RPC_URL = 'https://rpc.ankr.com/eth';
 const TRUSTED_ENS_SCORES: Record<string, number> = {
   'vitalik.eth': 0.95,
   'ens.eth': 0.93,
@@ -21,7 +23,26 @@ interface ENSSourceSignal {
   score: number;
 }
 
+interface PendingExecution {
+  request: ExecutionRequest;
+  trace: AgentTrace[];
+  finalPlan: YieldOption;
+  attempt: number;
+  initialProtocol: string;
+  reasonForRetry?: string;
+  riskDecision: 'approve' | 'reject';
+  ensReputationScore: number;
+  ensInfluence?: ENSInfluence;
+  axlInfluence?: AXLInfluence;
+  decisionImpact: DecisionImpact;
+  clampedYield: number;
+  clampedRisk: number;
+  preparedSwapQuote: UniswapQuoteResult | null;
+  approval: ExecutionApproval;
+}
+
 const ENS_TIMEOUT_MS = 4000;
+const APPROVAL_TTL_MS = 5 * 60 * 1000;
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -41,9 +62,10 @@ export class ExecutionService {
   private riskAgent = new RiskAgent();
   private executorAgent = new ExecutorAgent();
   private ensAdapter = new ENSAdapter();
+  private pendingExecutions = new Map<string, PendingExecution>();
   private reverseLookupClient = createPublicClient({
     chain: mainnet,
-    transport: http(process.env.ALCHEMY_MAINNET_RPC_URL),
+    transport: http(process.env.ALCHEMY_MAINNET_RPC_URL ?? DEFAULT_MAINNET_RPC_URL),
   });
 
   // --- ENS helpers ---
@@ -118,7 +140,7 @@ export class ExecutionService {
 
   // --- Main execution ---
 
-  async execute(request: ExecutionRequest): Promise<ExecutionResponse> {
+  async analyze(request: ExecutionRequest): Promise<ExecutionResponse> {
     const defaultSources = [...DEFAULT_ENS_SOURCES];
     const userENS = this.isEnsName(request.context?.ens) ? this.normalizeEnsName(request.context.ens) : null;
     let walletENS: string | null = null;
@@ -218,21 +240,30 @@ export class ExecutionService {
       timestamp: ts });
     ts += 10;
 
-    // Step 4: Execute
-    const executorOutput = await this.executorAgent.execute(finalPlan, trace, attempt, ts);
-    ts = trace[trace.length - 1]!.timestamp + 10;
-    const finalResult: ExecutionResult = executorOutput.result;
+    // Step 4: Prepare swap quote only. Final execution requires explicit user approval.
+    const quoteOutput = await this.executorAgent.quote(finalPlan, trace, ts);
+    ts = quoteOutput.nextTimestamp;
+    const preparedSwapQuote = quoteOutput.swapQuote;
 
-    // System: complete
-    trace.push({ agent: SYSTEM_AGENT, step: 'execute',
-      message: `Execution completed: deposited to ${finalResult.protocol}`,
-      metadata: { status: finalResult.status, protocol: finalResult.protocol },
+    const finalResult: ExecutionResult = {
+      protocol: finalPlan.protocol,
+      apy: `${finalPlan.apy}%`,
+      action: 'deposit',
+      status: 'pending_approval',
+      attempt,
+      swap: preparedSwapQuote ?? undefined,
+    };
+
+    trace.push({ agent: SYSTEM_AGENT, step: 'approval_required',
+      message: `Approval required before executing ${finalPlan.protocol}`,
+      metadata: { status: finalResult.status, protocol: finalResult.protocol, approvalRequired: true },
       timestamp: ts });
+    ts += 10;
 
     // Confidence — clamp to [0, 0.95]
     const clampedYield = normalizeConfidence(Math.min(0.95, Math.max(0, yieldConfidence)));
     const clampedRisk = normalizeConfidence(Math.min(0.95, Math.max(0, riskConfidence)));
-    const clampedExec = normalizeConfidence(Math.min(0.95, Math.max(0, executorOutput.confidence)));
+    const clampedExec = normalizeConfidence(0.9);
     const avgConfidence = normalizeConfidence((clampedYield + clampedRisk + clampedExec) / 3);
 
     // Decision impact — explicit ENS + AXL descriptions
@@ -253,8 +284,8 @@ export class ExecutionService {
 
     // Explanation
     const explanation = attempt > 1
-      ? `Initially selected ${initialProtocol} for higher yield, but switched to ${finalPlan.protocol} due to risk constraints. Successfully executed deposit.`
-      : `Selected ${finalPlan.protocol} with ${finalPlan.apy}% APY. Successfully executed deposit.`;
+      ? `Initially selected ${initialProtocol} for higher yield, but switched to ${finalPlan.protocol} due to risk constraints. Review and approve before execution.`
+      : `Selected ${finalPlan.protocol} with ${finalPlan.apy}% APY. Review and approve before execution.`;
 
     // --- Section 3: Trace assertions ---
     const agentsSeen = new Set(trace.map(t => t.agent));
@@ -269,7 +300,7 @@ export class ExecutionService {
     // --- Section 4: Output contract validation ---
     const isValidResult = finalResult.protocol.length > 0
       && finalResult.apy.endsWith('%')
-      && (finalResult.status === 'success' || finalResult.status === 'failed')
+      && (finalResult.status === 'pending_approval' || finalResult.status === 'success' || finalResult.status === 'failed')
       && explanation.length > 10
       && ensImpactDesc.length > 0
       && axlImpactDesc.length > 0;
@@ -291,11 +322,36 @@ export class ExecutionService {
       decisionImpact,
     };
 
+    const approval: ExecutionApproval = {
+      id: randomUUID(),
+      expiresAt: Date.now() + APPROVAL_TTL_MS,
+    };
+
+    this.cleanupPendingExecutions();
+    this.pendingExecutions.set(approval.id, {
+      request,
+      trace,
+      finalPlan,
+      attempt,
+      initialProtocol,
+      reasonForRetry,
+      riskDecision: riskResult.decision,
+      ensReputationScore: ensContext.reputationScore,
+      ensInfluence: lastEnsInfluence,
+      axlInfluence: lastAxlInfluence,
+      decisionImpact,
+      clampedYield,
+      clampedRisk,
+      preparedSwapQuote,
+      approval,
+    });
+
     return {
       intent: request.intent,
       trace,
       final_result: finalResult,
       summary,
+      approval,
       debug: {
         attempts: attempt,
         initialSelection: { protocol: initialProtocol },
@@ -307,5 +363,99 @@ export class ExecutionService {
         confidenceBreakdown: { yield: clampedYield, risk: clampedRisk, execution: clampedExec },
       },
     };
+  }
+
+  async execute(request: ExecutionRequest): Promise<ExecutionResponse> {
+    const analysis = await this.analyze(request);
+    if (!analysis.approval) {
+      throw new Error('Execution approval was not created');
+    }
+    return this.confirmExecution(analysis.approval.id);
+  }
+
+  async confirmExecution(approvalId: string): Promise<ExecutionResponse> {
+    this.cleanupPendingExecutions();
+
+    const pending = this.pendingExecutions.get(approvalId);
+    if (!pending) {
+      throw new Error('Approval request expired or not found');
+    }
+
+    this.pendingExecutions.delete(approvalId);
+
+    const trace = [...pending.trace];
+    let ts = (trace[trace.length - 1]?.timestamp ?? Date.now()) + 10;
+
+    trace.push({
+      agent: SYSTEM_AGENT,
+      step: 'approval',
+      message: `User approved execution for ${pending.finalPlan.protocol}`,
+      metadata: { approvalId, protocol: pending.finalPlan.protocol },
+      timestamp: ts,
+    });
+    ts += 10;
+
+    const executorOutput = await this.executorAgent.execute(
+      pending.finalPlan,
+      trace,
+      pending.attempt,
+      ts,
+      undefined,
+      pending.preparedSwapQuote
+    );
+    ts = trace[trace.length - 1]!.timestamp + 10;
+    const finalResult = executorOutput.result;
+
+    trace.push({
+      agent: SYSTEM_AGENT,
+      step: 'execute',
+      message: `Execution completed: deposited to ${finalResult.protocol}`,
+      metadata: { status: finalResult.status, protocol: finalResult.protocol },
+      timestamp: ts,
+    });
+
+    const clampedExec = normalizeConfidence(Math.min(0.95, Math.max(0, executorOutput.confidence)));
+    const avgConfidence = normalizeConfidence((pending.clampedYield + pending.clampedRisk + clampedExec) / 3);
+    const explanation = pending.attempt > 1
+      ? `Initially selected ${pending.initialProtocol} for higher yield, but switched to ${pending.finalPlan.protocol} due to risk constraints. Successfully executed deposit.`
+      : `Selected ${pending.finalPlan.protocol} with ${pending.finalPlan.apy}% APY. Successfully executed deposit.`;
+
+    const summary: ExecutionSummary = {
+      selectedProtocol: pending.finalPlan.protocol,
+      initialProtocol: pending.initialProtocol,
+      finalProtocol: pending.finalPlan.protocol,
+      wasRetried: pending.attempt > 1,
+      reasonForRetry: pending.reasonForRetry,
+      totalSteps: trace.length,
+      confidence: avgConfidence,
+      explanation,
+      decisionImpact: pending.decisionImpact,
+    };
+
+    return {
+      intent: pending.request.intent,
+      trace,
+      final_result: finalResult,
+      summary,
+      debug: {
+        attempts: pending.attempt,
+        initialSelection: { protocol: pending.initialProtocol },
+        finalApprovedPlan: pending.finalPlan,
+        riskDecision: pending.riskDecision,
+        ensReputationScore: pending.ensReputationScore,
+        ensInfluence: pending.ensInfluence,
+        axlInfluence: pending.axlInfluence,
+        confidenceBreakdown: { yield: pending.clampedYield, risk: pending.clampedRisk, execution: clampedExec },
+      },
+    };
+  }
+
+  private cleanupPendingExecutions(): void {
+    const now = Date.now();
+    for (const [id, pending] of this.pendingExecutions.entries()) {
+      if (pending.approval.expiresAt <= now) {
+        this.pendingExecutions.delete(id);
+      }
+    }
   }
 }

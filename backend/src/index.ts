@@ -1,5 +1,5 @@
 import express, { Express, Request, Response } from 'express';
-import { executeHandler } from './controllers/execute.controller';
+import { analyzeHandler, confirmExecutionHandler, executeHandler } from './controllers/execute.controller';
 import { ENSAdapter } from './adapters/ENSAdapter';
 import { YieldDataAdapter } from './adapters/YieldDataAdapter';
 
@@ -61,6 +61,8 @@ app.get('/ens-health', async (_req: Request, res: Response) => {
   }
 });
 
+app.post('/analyze', analyzeHandler);
+app.post('/execute/confirm', confirmExecutionHandler);
 app.post('/execute', executeHandler);
 
 app.listen(PORT, () => {

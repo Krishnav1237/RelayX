@@ -24,21 +24,17 @@ export class ExecutorAgent extends BaseAgent {
     super('executor.relay.eth', 'executor.relay.eth');
   }
 
-  async execute(
+  async quote(
     plan: YieldOption,
     trace: AgentTrace[],
-    attempt: number,
     timestamp: number,
     externalMetadata?: Record<string, unknown>
-  ): Promise<{ result: ExecutionResult; confidence: number }> {
-    const confidence = normalizeConfidence(0.9);
+  ): Promise<{ swapQuote: UniswapQuoteResult | null; nextTimestamp: number }> {
     let ts = timestamp;
-
-    // Step 1: Fetch Uniswap swap quote
-    const tokenPair = PROTOCOL_TOKEN_MAP[plan.protocol.toLowerCase()] ?? { tokenIn: 'ETH', tokenOut: 'USDC' };
+    const tokenPair = this.getTokenPair(plan.protocol);
 
     trace.push(this.log('quote',
-      `Fetching swap route from Uniswap for ${tokenPair.tokenIn} → ${tokenPair.tokenOut}`,
+      `Fetching swap route from Uniswap for ${tokenPair.tokenIn} -> ${tokenPair.tokenOut}`,
       { tokenIn: tokenPair.tokenIn, tokenOut: tokenPair.tokenOut, protocol: plan.protocol },
       ts, externalMetadata));
     ts += 10;
@@ -69,7 +65,47 @@ export class ExecutorAgent extends BaseAgent {
       ts += 10;
     } else {
       trace.push(this.log('quote',
-        'Uniswap unavailable — proceeding with deposit simulation',
+        'Uniswap unavailable - proceeding without a pre-execution swap quote',
+        { uniswapAvailable: false },
+        ts, externalMetadata));
+      ts += 10;
+    }
+
+    return { swapQuote, nextTimestamp: ts };
+  }
+
+  async execute(
+    plan: YieldOption,
+    trace: AgentTrace[],
+    attempt: number,
+    timestamp: number,
+    externalMetadata?: Record<string, unknown>,
+    preparedSwapQuote?: UniswapQuoteResult | null
+  ): Promise<{ result: ExecutionResult; confidence: number }> {
+    const confidence = normalizeConfidence(0.9);
+    let ts = timestamp;
+    const tokenPair = this.getTokenPair(plan.protocol);
+    let swapQuote = preparedSwapQuote;
+
+    if (swapQuote === undefined) {
+      const quoteOutput = await this.quote(plan, trace, ts, externalMetadata);
+      swapQuote = quoteOutput.swapQuote;
+      ts = quoteOutput.nextTimestamp;
+    } else if (swapQuote) {
+      trace.push(this.log('quote',
+        `Using approved Uniswap route: ${swapQuote.route}`,
+        {
+          amountOut: swapQuote.amountOut,
+          priceImpact: swapQuote.priceImpact,
+          gasEstimate: swapQuote.gasEstimate,
+          route: swapQuote.route,
+          source: swapQuote.source,
+        },
+        ts, externalMetadata));
+      ts += 10;
+    } else {
+      trace.push(this.log('quote',
+        'No approved swap quote available - proceeding with deposit simulation',
         { uniswapAvailable: false },
         ts, externalMetadata));
       ts += 10;
@@ -130,5 +166,9 @@ export class ExecutorAgent extends BaseAgent {
       ts, externalMetadata));
 
     return { result, confidence };
+  }
+
+  private getTokenPair(protocol: string): { tokenIn: string; tokenOut: string } {
+    return PROTOCOL_TOKEN_MAP[protocol.toLowerCase()] ?? { tokenIn: 'ETH', tokenOut: 'USDC' };
   }
 }
