@@ -15,6 +15,8 @@ app.use(express.json());
 console.log('[BOOT] ENS RPC:', process.env.ALCHEMY_MAINNET_RPC_URL ? 'configured' : 'not set (using public fallback)');
 console.log('[BOOT] AXL base:', AXL_BASE_URL);
 console.log('[BOOT] LLM:', process.env.OPENAI_API_KEY ? 'enabled' : 'disabled');
+console.log('[BOOT] Uniswap API:', process.env.UNISWAP_API_KEY ? 'enabled' : 'disabled (CoinGecko quote fallback active)');
+console.log('[BOOT] 0G memory:', process.env.ZEROG_MEMORY_KV_URL && process.env.ZEROG_MEMORY_LOG_URL ? 'enabled' : 'disabled');
 
 // --- Health endpoints (Section 2) ---
 
@@ -41,10 +43,16 @@ app.get('/yield-health', async (_req: Request, res: Response) => {
   const adapter = new YieldDataAdapter();
   try {
     const options = await adapter.getYieldOptions('ETH');
-    const isLive = options.length > 2 || options.some(o => o.apy !== 4.2 && o.apy !== 3.8);
-    res.json({ status: isLive ? 'ok' : 'fallback', source: isLive ? 'live' : 'cache', protocols: options.length });
+    const hasLive = options.some(o => o.source === 'defillama');
+    const hasCache = options.some(o => o.source === 'cache');
+    const status = options.length > 0 ? 'ok' : 'unavailable';
+    res.status(options.length > 0 ? 200 : 503).json({
+      status,
+      source: hasLive ? 'defillama' : hasCache ? 'cache' : 'none',
+      protocols: options.length,
+    });
   } catch {
-    res.status(503).json({ status: 'fallback', source: 'cache', protocols: 0 });
+    res.status(503).json({ status: 'unavailable', source: 'none', protocols: 0 });
   }
 });
 

@@ -52,10 +52,9 @@ describe('Verification Scenarios', () => {
     expect(ensScore).toBeGreaterThanOrEqual(0.5);
   });
 
-  it('DEMO MODE: guaranteed retry path', async () => {
+  it('LIVE DATA: retry path when top yield fails risk review', async () => {
     const r = await service.execute({
       intent: 'get best yield on ETH',
-      context: { demo: true },
     });
 
     expect(r.summary.wasRetried).toBe(true);

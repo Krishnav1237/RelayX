@@ -2,7 +2,7 @@
 
 ## 1. No On-Chain Execution
 
-ExecutorAgent returns a simulated success result. No actual token deposits, swaps, or blockchain transactions occur. The `ExecutionAdapter`, `MemoryAdapter`, and `SwapAdapter` are placeholders.
+ExecutorAgent prepares a successful deposit result and attaches upstream quote data when available, but it does not sign or submit token deposits, swaps, or blockchain transactions.
 
 ## 2. Frontend/Backend Agent Name Mismatch
 
@@ -16,13 +16,13 @@ Backend returns `final_result.apy` as `"4.2%"` (string with percent). Frontend s
 
 Backend and frontend define execution interfaces separately. Contract drift is possible when response shape evolves.
 
-## 5. DefiLlama Data Variability
+## 5. DefiLlama And Memory Variability
 
-Live yield data changes constantly. The same intent may produce different protocol selections on different runs. Demo mode (`context.demo = true`) provides stable behavior for presentations.
+Live yield data changes constantly, and 0G memory evolves after successful executions. The same intent may produce different protocol selections over time because historical success stats can influence risk and retry decisions. Demo mode injects memory only; it does not write to real 0G storage.
 
-## 6. AXL Requires Local Nodes
+## 6. AXL Requires Reachable Nodes
 
-AXL broadcasts to `localhost:3005`, `:3006`, `:3007`. In most environments, these are not running, so AXL returns empty responses. The system works fine without AXL — it just doesn't get peer consensus influence.
+AXL broadcasts to `localhost:3005`, `:3006`, `:3007` by default. In most environments, these are not running, so AXL returns empty responses. The optional `npm run axl:node` relay only forwards to configured `AXL_PEER_URLS`; it does not generate peer opinions.
 
 ## 7. ENS Depends on RPC Availability
 
@@ -34,4 +34,12 @@ The ReasoningAdapter requires `OPENAI_API_KEY`. Without it, LLM reasoning is com
 
 ## 9. DefiLlama Timeout
 
-The DefiLlama pools endpoint returns a large payload. With a 5-second timeout, it may fail on slow connections. The system falls back to cached data or the Aave+Compound minimal set.
+The DefiLlama pools endpoint returns a large payload. With an 8-second timeout, it may fail on slow connections. The system falls back only to cached upstream data; if there is no cache, `/execute` returns a structured failed response.
+
+## 10. Quote Precision
+
+CoinGecko fallback quotes are spot-price estimates, not executable routes. Use `UNISWAP_API_KEY` for route-level quote data.
+
+## 11. 0G Write Gateway Configuration
+
+The adapter expects configured `ZEROG_MEMORY_KV_URL` and `ZEROG_MEMORY_LOG_URL` endpoints. If those endpoints are absent or unavailable, memory returns null stats and does not influence decisions.

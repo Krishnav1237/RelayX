@@ -62,9 +62,8 @@ describe('Audit S2: Edge Case Destruction', () => {
     expect(r.final_result.status).toBe('success');
   });
 
-  it('all external systems down still returns valid response', async () => {
-    // In test env: AXL down, DefiLlama may timeout, Uniswap may fail
-    // System must still work via fallbacks
+  it('AXL unavailable still returns valid response with market data', async () => {
+    // In test env: AXL is down, while DefiLlama and CoinGecko are fixture-backed upstream APIs.
     const r = await service.execute({ intent: 'get best yield on ETH' });
     expect(r.final_result.status).toBe('success');
     expect(r.trace.length).toBeGreaterThanOrEqual(8);
@@ -97,32 +96,31 @@ describe('Audit S2: Edge Case Destruction', () => {
   it('UniswapAdapter handles unknown tokens', async () => {
     const adapter = new UniswapAdapter();
     const quote = await adapter.getQuote({ tokenIn: 'FAKE', tokenOut: 'NOPE', amount: '1000' });
-    expect(quote).not.toBeNull();
-    expect(quote!.source).toBe('mock');
+    expect(quote).toBeNull();
   });
 
   it('YieldDataAdapter handles unsupported asset', async () => {
     const adapter = new YieldDataAdapter();
     const options = await adapter.getYieldOptions('ZZZZNOTREAL');
     expect(Array.isArray(options)).toBe(true);
-    expect(options.length).toBeGreaterThanOrEqual(2);
+    expect(options.length).toBe(0);
   });
 });
 
 // ─── SECTION 3: DETERMINISM + CONSISTENCY ───
 
 describe('Audit S3: Determinism', () => {
-  it('demo mode produces consistent results across 3 runs', async () => {
+  it('repeated runs produce consistent results with stable upstream data', async () => {
     const results = [];
     for (let i = 0; i < 3; i++) {
-      const r = await service.execute({ intent: 'get best yield on ETH', context: { demo: true } });
+      const r = await service.execute({ intent: 'get best yield on ETH' });
       results.push(r);
     }
 
     const protocols = results.map(r => r.summary.finalProtocol);
     const retried = results.map(r => r.summary.wasRetried);
 
-    // All should be identical in demo mode
+    // All should be identical with deterministic fixtures.
     expect(new Set(protocols).size).toBe(1);
     expect(new Set(retried).size).toBe(1);
     console.log(`[CONSISTENCY CHECK] PASS — protocol: ${protocols[0]}, retried: ${retried[0]}`);
@@ -164,7 +162,7 @@ describe('Audit S5: Trace Quality', () => {
   });
 
   it('trace messages explain WHY not just WHAT', async () => {
-    const r = await service.execute({ intent: 'get best yield on ETH', context: { demo: true } });
+    const r = await service.execute({ intent: 'get best yield on ETH' });
 
     // Should have explanatory messages, not just "executing"
     const hasExplanation = r.trace.some(t =>
@@ -250,8 +248,8 @@ describe('Audit S10: Real World Intents', () => {
 // ─── SECTION 11: DEMO READINESS ───
 
 describe('Audit S11: Demo Readiness', () => {
-  it('demo mode shows retry + ENS + Uniswap', async () => {
-    const r = await service.execute({ intent: 'get best yield on ETH', context: { demo: true } });
+  it('pipeline shows retry + ENS + swap quote', async () => {
+    const r = await service.execute({ intent: 'get best yield on ETH' });
 
     // Retry visible
     expect(r.summary.wasRetried).toBe(true);

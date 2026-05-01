@@ -2,6 +2,7 @@ import { BaseAgent } from './BaseAgent';
 import { AXLInfluence, AXLMessage, AgentTrace, ENSInfluence, ENSReputationContext, ENSTier, RiskReviewResult, YieldOption } from '../types';
 import { AXLAdapter } from '../adapters/AXLAdapter';
 import { ReasoningAdapter } from '../adapters/ReasoningAdapter';
+import { ProtocolStats, ZeroGMemoryAdapter } from '../adapters/ZeroGMemoryAdapter';
 
 function normalizeConfidence(value: number): number {
   return Math.round(Math.max(0, Math.min(0.95, value)) * 100) / 100;
@@ -22,7 +23,7 @@ export class RiskAgent extends BaseAgent {
   private axlAdapter = new AXLAdapter();
   private reasoningAdapter = new ReasoningAdapter();
 
-  constructor() {
+  constructor(private readonly memoryAdapter = new ZeroGMemoryAdapter()) {
     super('risk.relay.eth', 'risk.relay.eth');
   }
 
@@ -134,6 +135,12 @@ export class RiskAgent extends BaseAgent {
     trace.push(this.log('review', axlTraceMsg, { axlInfluence }, ts, externalMetadata));
     ts += 10;
 
+    const memoryResult = await this.applyMemoryInfluence(plan, trace, ts, externalMetadata);
+    riskScore += memoryResult.riskScoreDelta;
+    confidenceAdjustment += memoryResult.confidenceDelta;
+    if (memoryResult.flag) flags.push(memoryResult.flag);
+    ts = memoryResult.timestamp;
+
     // Decision
     const decision: 'approve' | 'reject' = riskScore >= 35 ? 'reject' : 'approve';
     const confidenceBase = decision === 'approve' ? 0.85 : 0.5;
@@ -186,6 +193,63 @@ export class RiskAgent extends BaseAgent {
   private normalizeScore(value: number): number {
     if (!Number.isFinite(value)) return 0.5;
     return Math.round(Math.max(0, Math.min(1, value)) * 100) / 100;
+  }
+
+  private async applyMemoryInfluence(
+    plan: YieldOption,
+    trace: AgentTrace[],
+    timestamp: number,
+    externalMetadata?: Record<string, unknown>
+  ): Promise<{ confidenceDelta: number; riskScoreDelta: number; timestamp: number; flag?: string }> {
+    let ts = timestamp;
+    const stats = await this.memoryAdapter.getProtocolStats(plan.protocol);
+
+    if (!stats) {
+      if (this.memoryAdapter.getLastUnavailableReason()) {
+        trace.push(this.log('review',
+          'Memory unavailable — proceeding without historical context',
+          { memoryAvailable: false },
+          ts, externalMetadata));
+        ts += 10;
+      }
+      return { confidenceDelta: 0, riskScoreDelta: 0, timestamp: ts };
+    }
+
+    const influence = this.computeMemoryInfluence(stats);
+    if (!influence) return { confidenceDelta: 0, riskScoreDelta: 0, timestamp: ts };
+
+    const successPercent = Math.round(stats.successRate * 100);
+    const message = influence.influence === 'positive'
+      ? `Memory: ${stats.protocol} has ${successPercent}% success rate across ${stats.executionCount} executions → increasing confidence`
+      : `Memory: ${stats.protocol} has ${successPercent}% success rate across ${stats.executionCount} executions → decreasing confidence and adding risk`;
+
+    trace.push(this.log('review', message, {
+      successRate: stats.successRate,
+      executionCount: stats.executionCount,
+      avgConfidence: stats.avgConfidence,
+      influence: influence.influence,
+    }, ts, externalMetadata));
+    ts += 10;
+
+    return {
+      confidenceDelta: influence.confidenceDelta,
+      riskScoreDelta: influence.riskScoreDelta,
+      timestamp: ts,
+      flag: influence.influence === 'negative'
+        ? `Memory reports low historical success (${successPercent}%) for ${stats.protocol}`
+        : undefined,
+    };
+  }
+
+  private computeMemoryInfluence(stats: ProtocolStats): { influence: 'positive' | 'negative'; confidenceDelta: number; riskScoreDelta: number } | null {
+    if (stats.executionCount <= 0) return null;
+    if (stats.successRate > 0.9) {
+      return { influence: 'positive', confidenceDelta: 0.05, riskScoreDelta: 0 };
+    }
+    if (stats.successRate < 0.6) {
+      return { influence: 'negative', confidenceDelta: -0.05, riskScoreDelta: 10 };
+    }
+    return null;
   }
 
   private buildReasoning(

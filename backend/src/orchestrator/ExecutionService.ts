@@ -1,8 +1,9 @@
-import { AgentTrace, AXLInfluence, DecisionImpact, ENSInfluence, ENSReputationContext, ExecutionRequest, ExecutionResponse, ExecutionResult, ExecutionSummary, YieldOption } from '../types';
+import { AgentTrace, AXLInfluence, DecisionImpact, ENSInfluence, ENSReputationContext, ExecutionRequest, ExecutionResponse, ExecutionResult, ExecutionSummary, YieldOption, YieldThinkResult } from '../types';
 import { YieldAgent } from '../agents/YieldAgent';
 import { RiskAgent } from '../agents/RiskAgent';
 import { ExecutorAgent } from '../agents/ExecutorAgent';
 import { ENSAdapter } from '../adapters/ENSAdapter';
+import { ZeroGMemoryAdapter } from '../adapters/ZeroGMemoryAdapter';
 import { createPublicClient, http, type Address } from 'viem';
 import { mainnet } from 'viem/chains';
 
@@ -37,14 +38,23 @@ function normalizeConfidence(value: number): number {
 }
 
 export class ExecutionService {
-  private yieldAgent = new YieldAgent();
-  private riskAgent = new RiskAgent();
-  private executorAgent = new ExecutorAgent();
-  private ensAdapter = new ENSAdapter();
+  private yieldAgent: YieldAgent;
+  private riskAgent: RiskAgent;
+  private executorAgent: ExecutorAgent;
+  private ensAdapter: ENSAdapter;
+  private memoryAdapter: ZeroGMemoryAdapter;
   private reverseLookupClient = createPublicClient({
     chain: mainnet,
     transport: http(process.env.ALCHEMY_MAINNET_RPC_URL),
   });
+
+  constructor(memoryAdapter = new ZeroGMemoryAdapter()) {
+    this.memoryAdapter = memoryAdapter;
+    this.yieldAgent = new YieldAgent();
+    this.riskAgent = new RiskAgent(memoryAdapter);
+    this.executorAgent = new ExecutorAgent();
+    this.ensAdapter = new ENSAdapter();
+  }
 
   // --- ENS helpers ---
 
@@ -119,6 +129,10 @@ export class ExecutionService {
   // --- Main execution ---
 
   async execute(request: ExecutionRequest): Promise<ExecutionResponse> {
+    const memoryAdapter = request.context?.demo === true ? ZeroGMemoryAdapter.demo() : this.memoryAdapter;
+    const riskAgent = request.context?.demo === true ? new RiskAgent(memoryAdapter) : this.riskAgent;
+    const traceMetadata = request.context?.demo === true ? { demo: true } : undefined;
+
     const defaultSources = [...DEFAULT_ENS_SOURCES];
     const userENS = this.isEnsName(request.context?.ens) ? this.normalizeEnsName(request.context.ens) : null;
     let walletENS: string | null = null;
@@ -155,8 +169,12 @@ export class ExecutionService {
 
     // Step 1: YieldAgent
     let attempt = 1;
-    const demoMetadata = request.context?.demo ? { demo: true } : undefined;
-    let yieldResult = await this.yieldAgent.think(request.intent, attempt, trace, ts, demoMetadata);
+    let yieldResult: YieldThinkResult & { confidence: number };
+    try {
+      yieldResult = await this.yieldAgent.think(request.intent, attempt, trace, ts, traceMetadata);
+    } catch (error) {
+      return this.buildYieldUnavailableResponse(request, trace, ts, ensContext, error);
+    }
     ts = trace[trace.length - 1]!.timestamp + 10;
 
     let selectedOption: YieldOption = yieldResult.selectedOption;
@@ -169,7 +187,7 @@ export class ExecutionService {
     let lastAxlInfluence: AXLInfluence | undefined;
 
     // Step 2: RiskAgent
-    let riskOutput = await this.riskAgent.review(selectedOption, trace, ts, undefined, ensContext);
+    let riskOutput = await riskAgent.review(selectedOption, trace, ts, traceMetadata, ensContext);
     ts = trace[trace.length - 1]!.timestamp + 10;
     let riskResult = riskOutput.result;
     riskConfidence = riskOutput.confidence;
@@ -197,13 +215,27 @@ export class ExecutionService {
         timestamp: ts });
       ts += 10;
 
-      yieldResult = await this.yieldAgent.think(request.intent, attempt, trace, ts, demoMetadata);
+      try {
+        yieldResult = await this.yieldAgent.think(request.intent, attempt, trace, ts, traceMetadata);
+      } catch (error) {
+        return this.buildYieldUnavailableResponse(request, trace, ts, ensContext, error);
+      }
       ts = trace[trace.length - 1]!.timestamp + 10;
-      selectedOption = yieldResult.selectedOption;
+      const memorySelection = await this.selectRetryOptionByMemory(
+        yieldResult.options,
+        initialProtocol,
+        yieldResult.selectedOption,
+        memoryAdapter,
+        trace,
+        ts,
+        traceMetadata
+      );
+      selectedOption = memorySelection.option;
+      ts = memorySelection.timestamp;
       finalPlan = selectedOption;
       yieldConfidence = yieldResult.confidence;
 
-      riskOutput = await this.riskAgent.review(selectedOption, trace, ts, undefined, ensContext);
+      riskOutput = await riskAgent.review(selectedOption, trace, ts, traceMetadata, ensContext);
       ts = trace[trace.length - 1]!.timestamp + 10;
       riskResult = riskOutput.result;
       riskConfidence = riskOutput.confidence;
@@ -228,12 +260,25 @@ export class ExecutionService {
       message: `Execution completed: deposited to ${finalResult.protocol}`,
       metadata: { status: finalResult.status, protocol: finalResult.protocol },
       timestamp: ts });
+    ts += 10;
 
     // Confidence — clamp to [0, 0.95]
     const clampedYield = normalizeConfidence(Math.min(0.95, Math.max(0, yieldConfidence)));
     const clampedRisk = normalizeConfidence(Math.min(0.95, Math.max(0, riskConfidence)));
     const clampedExec = normalizeConfidence(Math.min(0.95, Math.max(0, executorOutput.confidence)));
     const avgConfidence = normalizeConfidence((clampedYield + clampedRisk + clampedExec) / 3);
+
+    if (finalResult.status === 'success') {
+      ts = await this.persistExecutionMemory(
+        memoryAdapter,
+        request.intent,
+        finalPlan,
+        attempt > 1 ? initialProtocol : undefined,
+        avgConfidence,
+        trace,
+        ts
+      );
+    }
 
     // Decision impact — explicit ENS + AXL descriptions
     const ensImpactDesc = lastEnsInfluence
@@ -305,6 +350,158 @@ export class ExecutionService {
         ensInfluence: lastEnsInfluence,
         axlInfluence: lastAxlInfluence,
         confidenceBreakdown: { yield: clampedYield, risk: clampedRisk, execution: clampedExec },
+      },
+    };
+  }
+
+  private async selectRetryOptionByMemory(
+    options: YieldOption[],
+    rejectedProtocol: string,
+    fallbackOption: YieldOption,
+    memoryAdapter: ZeroGMemoryAdapter,
+    trace: AgentTrace[],
+    timestamp: number,
+    externalMetadata?: Record<string, unknown>
+  ): Promise<{ option: YieldOption; timestamp: number }> {
+    if (!memoryAdapter.isEnabled()) return { option: fallbackOption, timestamp };
+
+    const scoredOptions: Array<{ option: YieldOption; successRate: number; avgConfidence: number; executionCount: number }> = [];
+
+    for (const option of options) {
+      if (option.protocol.trim().toLowerCase() === rejectedProtocol.trim().toLowerCase()) continue;
+      const stats = await memoryAdapter.getProtocolStats(option.protocol);
+      if (!stats || stats.executionCount <= 0) continue;
+      scoredOptions.push({
+        option,
+        successRate: stats.successRate,
+        avgConfidence: stats.avgConfidence,
+        executionCount: stats.executionCount,
+      });
+    }
+
+    if (scoredOptions.length === 0) return { option: fallbackOption, timestamp };
+
+    scoredOptions.sort((a, b) => {
+      if (b.successRate !== a.successRate) return b.successRate - a.successRate;
+      if (b.avgConfidence !== a.avgConfidence) return b.avgConfidence - a.avgConfidence;
+      if (b.option.apy !== a.option.apy) return b.option.apy - a.option.apy;
+      return a.option.protocol.localeCompare(b.option.protocol);
+    });
+
+    const selected = scoredOptions[0]!;
+    const metadata = {
+      protocol: selected.option.protocol,
+      successRate: selected.successRate,
+      avgConfidence: selected.avgConfidence,
+      executionCount: selected.executionCount,
+      fallbackProtocol: fallbackOption.protocol,
+      ...(externalMetadata ?? {}),
+    };
+    trace.push({
+      agent: SYSTEM_AGENT,
+      step: 'retry',
+      message: `Memory retry preference: selected ${selected.option.protocol} using ${Math.round(selected.successRate * 100)}% success rate across ${selected.executionCount} executions`,
+      metadata,
+      timestamp,
+    });
+
+    return { option: selected.option, timestamp: timestamp + 10 };
+  }
+
+  private async persistExecutionMemory(
+    memoryAdapter: ZeroGMemoryAdapter,
+    intent: string,
+    finalPlan: YieldOption,
+    rejectedProtocol: string | undefined,
+    confidence: number,
+    trace: AgentTrace[],
+    timestamp: number
+  ): Promise<number> {
+    await memoryAdapter.storeExecution({
+      intent,
+      selectedProtocol: finalPlan.protocol,
+      rejectedProtocol,
+      confidence,
+      outcome: 'success',
+      timestamp: Date.now(),
+    });
+
+    const unavailable = memoryAdapter.getLastUnavailableReason();
+    if (unavailable) {
+      trace.push({
+        agent: SYSTEM_AGENT,
+        step: 'memory',
+        message: 'Memory unavailable — execution history not persisted',
+        metadata: { memoryAvailable: false, reason: unavailable },
+        timestamp,
+      });
+      return timestamp + 10;
+    }
+
+    trace.push({
+      agent: SYSTEM_AGENT,
+      step: 'memory',
+      message: `Memory stored execution outcome for ${finalPlan.protocol}`,
+      metadata: {
+        selectedProtocol: finalPlan.protocol,
+        rejectedProtocol,
+        confidence,
+        outcome: 'success',
+      },
+      timestamp,
+    });
+    return timestamp + 10;
+  }
+
+  private buildYieldUnavailableResponse(
+    request: ExecutionRequest,
+    trace: AgentTrace[],
+    timestamp: number,
+    ensContext: ENSReputationContext,
+    error: unknown
+  ): ExecutionResponse {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    trace.push({
+      agent: SYSTEM_AGENT,
+      step: 'evaluate',
+      message: `Yield data unavailable: ${errorMessage}`,
+      metadata: { status: 'failed', reason: errorMessage },
+      timestamp,
+    });
+
+    const finalResult: ExecutionResult = {
+      protocol: 'unavailable',
+      apy: '0%',
+      action: 'deposit',
+      status: 'failed',
+      attempt: 0,
+    };
+
+    const explanation = 'Could not select a protocol because no live or cached yield data was available.';
+
+    return {
+      intent: request.intent,
+      trace,
+      final_result: finalResult,
+      summary: {
+        selectedProtocol: finalResult.protocol,
+        initialProtocol: finalResult.protocol,
+        finalProtocol: finalResult.protocol,
+        wasRetried: false,
+        totalSteps: trace.length,
+        confidence: 0,
+        explanation,
+        decisionImpact: {
+          ens: `ENS reputation was computed (${ensContext.reputationScore}) but not applied to a yield decision`,
+          axl: 'AXL consensus was not evaluated because yield data was unavailable',
+        },
+      },
+      debug: {
+        attempts: 0,
+        ensReputationScore: ensContext.reputationScore,
+        confidenceBreakdown: { yield: 0, risk: 0, execution: 0 },
+        error: errorMessage,
       },
     };
   }

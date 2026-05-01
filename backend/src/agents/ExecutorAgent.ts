@@ -55,21 +55,21 @@ export class ExecutorAgent extends BaseAgent {
     }
 
     if (swapQuote) {
-      const sourceLabel = swapQuote.source === 'live' ? 'live' : 'mock';
       trace.push(this.log('quote',
-        `Uniswap route found (${sourceLabel}): estimated ${swapQuote.amountOut} ${tokenPair.tokenOut} output (price impact ${swapQuote.priceImpact}%)`,
+        `Swap route found via ${swapQuote.source}: estimated ${swapQuote.amountOut} ${tokenPair.tokenOut} output (price impact ${swapQuote.priceImpact}%)`,
         {
           amountOut: swapQuote.amountOut,
           priceImpact: swapQuote.priceImpact,
           gasEstimate: swapQuote.gasEstimate,
           route: swapQuote.route,
           source: swapQuote.source,
+          lastUpdatedAt: swapQuote.lastUpdatedAt,
         },
         ts, externalMetadata));
       ts += 10;
     } else {
       trace.push(this.log('quote',
-        'Uniswap unavailable — proceeding with deposit simulation',
+        'No swap quote available from Uniswap or CoinGecko — proceeding without route data',
         { uniswapAvailable: false },
         ts, externalMetadata));
       ts += 10;

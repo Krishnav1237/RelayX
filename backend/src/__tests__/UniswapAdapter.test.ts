@@ -17,7 +17,7 @@ describe('UniswapAdapter', () => {
     expect(quote!.priceImpact).toBeGreaterThanOrEqual(0);
     expect(quote!.gasEstimate.length).toBeGreaterThan(0);
     expect(quote!.route.length).toBeGreaterThan(0);
-    expect(['live', 'mock']).toContain(quote!.source);
+    expect(['uniswap', 'coingecko', 'cache']).toContain(quote!.source);
   });
 
   it('should return a quote for WETH→DAI', async () => {
@@ -41,15 +41,14 @@ describe('UniswapAdapter', () => {
     expect(q1!.amountOut).toBe(q2!.amountOut);
   });
 
-  it('should return mock for unknown token pairs', async () => {
+  it('should return null for unknown token pairs', async () => {
     const quote = await adapter.getQuote({
       tokenIn: 'ZZZZZ',
       tokenOut: 'YYYYY',
       amount: '1000',
     });
 
-    expect(quote).not.toBeNull();
-    expect(quote!.source).toBe('mock');
+    expect(quote).toBeNull();
   });
 
   it('should have valid price impact (0-100)', async () => {

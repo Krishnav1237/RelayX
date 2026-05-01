@@ -41,38 +41,31 @@ export class YieldAgent extends BaseAgent {
     trace.push(this.log('analyze', `Analyzing user intent: "${intent}"`, { attempt }, ts, externalMetadata));
     ts += 10;
 
-    // Fetch live yield data (with cache + fallback)
+    // Fetch live yield data, falling back only to cached upstream data.
     const asset = this.extractAsset(intent);
     let liveOptions = await this.yieldDataAdapter.getYieldOptions(asset);
 
-    // Task 1: Validate and ensure minimum 2 options
     liveOptions = liveOptions.filter(o => o.apy > 0 && o.apy <= 50 && o.protocol.length > 0);
-    if (liveOptions.length < 2) {
-      liveOptions = [
-        { protocol: 'Aave', apy: 4.2, riskLevel: 'low' as const },
-        { protocol: 'Compound', apy: 3.8, riskLevel: 'low' as const },
-      ];
+    if (liveOptions.length === 0) {
+      throw new Error(`No DefiLlama yield data available for ${asset}`);
     }
 
-    // Task 11: Demo mode — ensure stable protocols with retry path
-    const isDemo = externalMetadata?.demo === true;
-    if (isDemo) {
-      const hasMediumRisk = liveOptions.some(o => o.riskLevel === 'medium');
-      const hasLowRisk = liveOptions.some(o => o.riskLevel === 'low');
-      if (!hasMediumRisk || !hasLowRisk) {
-        liveOptions = [
-          { protocol: 'Morpho', apy: 4.6, riskLevel: 'medium' as const },
-          { protocol: 'Aave', apy: 4.2, riskLevel: 'low' as const },
-          { protocol: 'Compound', apy: 3.8, riskLevel: 'low' as const },
-        ];
-      }
-    }
-
-    const isLiveData = liveOptions.length > 0 && liveOptions[0]!.protocol !== 'Aave' || liveOptions.some(o => o.apy !== 4.2 && o.apy !== 3.8);
+    const isLiveData = liveOptions.some(o => o.source === 'defillama');
+    const sourceLabel = isLiveData ? 'DefiLlama live' : 'cached DefiLlama';
 
     trace.push(this.log('analyze',
-      `Fetched ${isLiveData ? 'live' : 'cached'} yield data (${liveOptions.length} protocols)`,
-      { asset, protocols: liveOptions.map(o => ({ protocol: o.protocol, apy: o.apy })), isLiveData },
+      `Fetched ${sourceLabel} yield data (${liveOptions.length} protocols)`,
+      {
+        asset,
+        protocols: liveOptions.map(o => ({
+          protocol: o.protocol,
+          apy: o.apy,
+          source: o.source,
+          tvlUsd: o.tvlUsd,
+          poolId: o.poolId,
+        })),
+        isLiveData,
+      },
       ts, externalMetadata));
     ts += 10;
 
@@ -224,6 +217,7 @@ export class YieldAgent extends BaseAgent {
     if (typeof value.protocol !== 'string' || typeof value.apy !== 'number') return null;
     const protocol = value.protocol.trim();
     if (!protocol) return null;
+    if (value.apy <= 0 || value.apy > 50) return null;
     const rl = value.riskLevel;
     const riskLevel = rl === 'low' || rl === 'medium' || rl === 'high' ? rl : undefined;
     return { protocol, apy: value.apy, riskLevel };

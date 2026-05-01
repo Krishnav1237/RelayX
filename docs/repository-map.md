@@ -36,7 +36,7 @@
 
 | File | Purpose |
 |---|---|
-| `scripts/axl-mock-node.js` | Local AXL mock HTTP node for development |
+| `scripts/axl-dev-node.js` | Local AXL relay for configured peer URLs |
 
 ### Source: Entry + Controller
 
@@ -58,17 +58,18 @@
 | `src/agents/BaseAgent.ts` | Shared identity + trace logging helper |
 | `src/agents/YieldAgent.ts` | Live yield data fetch, AXL merge, protocol selection |
 | `src/agents/RiskAgent.ts` | ENS tiers + AXL consensus + LLM blending → approve/reject |
-| `src/agents/ExecutorAgent.ts` | Uniswap quote + simulated deposit + AXL signal |
+| `src/agents/ExecutorAgent.ts` | Quote retrieval + deposit result preparation + AXL signal |
 
 ### Source: Adapters
 
 | File | Purpose |
 |---|---|
-| `src/adapters/YieldDataAdapter.ts` | DefiLlama live yield data (cached, with fallback) |
+| `src/adapters/YieldDataAdapter.ts` | DefiLlama live yield data (cached, no synthetic fallback) |
 | `src/adapters/ENSAdapter.ts` | Real ENS resolution via viem (cached, RPC fallback) |
 | `src/adapters/AXLAdapter.ts` | Multi-node AXL HTTP adapter (parallel, validated) |
-| `src/adapters/UniswapAdapter.ts` | Uniswap quote API (live + mock fallback, cached) |
+| `src/adapters/UniswapAdapter.ts` | Uniswap quote API + CoinGecko spot quote fallback (cached) |
 | `src/adapters/ReasoningAdapter.ts` | Optional OpenAI LLM (safe mode, 2s timeout) |
+| `src/adapters/ZeroGMemoryAdapter.ts` | 0G-backed execution log and protocol stats memory |
 
 ### Source: Types
 
@@ -76,23 +77,24 @@
 |---|---|
 | `src/types/index.ts` | All TypeScript interfaces (zero `any`) |
 
-### Tests (124 tests across 13 files)
+### Tests (129 tests across 14 files)
 
 | File | Tests | Coverage |
 |---|---|---|
 | `BaseAgent.test.ts` | 5 | Identity, logging, metadata |
-| `YieldAgent.test.ts` | 8 | Live data, selection, retry, asset extraction |
+| `YieldAgent.test.ts` | 9 | Live data, selection, retry, asset extraction |
 | `RiskAgent.test.ts` | 12 | ENS tiers, AXL influence, approve/reject |
-| `ExecutorAgent.test.ts` | 8 | Uniswap quote, result fields, narrative |
+| `ExecutorAgent.test.ts` | 9 | Quote data, result fields, narrative |
 | `ExecutionService.test.ts` | 11 | Full flow, retry, determinism, decisionImpact |
 | `AXLAdapter.test.ts` | 6 | Empty responses, graceful degradation |
-| `YieldDataAdapter.test.ts` | 4 | Live fetch, caching, fallback |
+| `YieldDataAdapter.test.ts` | 4 | Live fetch, caching, no-data behavior |
 | `UniswapAdapter.test.ts` | 5 | Quote fetch, caching, unknown tokens |
-| `EdgeCases.test.ts` | 13 | Boundaries, ENS tiers, confidence bounds |
+| `EdgeCases.test.ts` | 15 | Boundaries, ENS tiers, confidence bounds |
 | `integration.test.ts` | 1 | Full end-to-end flow |
-| `hardening.test.ts` | 19 | Stability, demo mode, low data, validation |
-| `verification.test.ts` | 7 | All demo scenarios, output contract |
+| `hardening.test.ts` | 15 | Stability, live retry path, low data, validation |
+| `verification.test.ts` | 7 | Verification scenarios, output contract |
 | `audit.test.ts` | 25 | Pipeline, edge cases, determinism, security |
+| `ZeroGMemoryAdapter.test.ts` | 5 | Memory storage, stats influence, fail-safe, demo |
 
 ## Frontend (`frontend/`)
 

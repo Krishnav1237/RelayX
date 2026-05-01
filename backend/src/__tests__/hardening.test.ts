@@ -32,10 +32,9 @@ describe('Hardening: Stability', () => {
     expect(r.final_result.status).toBe('success');
   });
 
-  it('Scenario 3: Demo mode — retry path guaranteed', async () => {
+  it('Scenario 3: Upstream data can trigger retry path', async () => {
     const r = await service.execute({
       intent: 'get best yield on ETH',
-      context: { demo: true },
     });
 
     expect(r.summary.wasRetried).toBe(true);
@@ -44,12 +43,12 @@ describe('Hardening: Stability', () => {
     expect(r.summary.explanation).toContain('Initially selected');
   });
 
-  it('Scenario 4: Low data — fallback options used', async () => {
+  it('Scenario 4: Unknown asset in free-form intent defaults to ETH discovery', async () => {
     const agent = new YieldAgent();
     const trace: AgentTrace[] = [];
     const result = await agent.think('get best yield on ZZZZNOTREAL', 1, trace, 1000);
 
-    // Should have at least 2 options (fallback)
+    // No known asset is present, so the agent uses ETH as the default discovery asset.
     expect(result.options.length).toBeGreaterThanOrEqual(2);
     expect(result.selectedOption).toBeDefined();
   });

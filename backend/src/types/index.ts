@@ -22,7 +22,8 @@ export interface UniswapQuoteResult {
   priceImpact: number;
   gasEstimate: string;
   route: string;
-  source: 'live' | 'mock';
+  source: 'uniswap' | 'coingecko' | 'cache';
+  lastUpdatedAt?: number;
 }
 
 export type ENSTier = 'strong' | 'neutral' | 'weak';
@@ -79,6 +80,10 @@ export interface YieldOption {
   protocol: string;
   apy: number;
   riskLevel?: 'low' | 'medium' | 'high';
+  chain?: string;
+  poolId?: string;
+  source?: 'defillama' | 'cache';
+  tvlUsd?: number;
 }
 
 export interface YieldThinkResult {
