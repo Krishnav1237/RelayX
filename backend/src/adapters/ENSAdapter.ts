@@ -8,10 +8,9 @@ interface ENSCacheEntry {
 }
 
 const PUBLIC_RPC_ENDPOINTS = ['https://rpc.ankr.com/eth'] as const;
-const RPC_ENDPOINTS = [
-  process.env.ALCHEMY_MAINNET_RPC_URL,
-  ...PUBLIC_RPC_ENDPOINTS,
-].filter((rpc): rpc is string => typeof rpc === 'string' && rpc.trim().length > 0);
+const RPC_ENDPOINTS = [process.env.ALCHEMY_MAINNET_RPC_URL, ...PUBLIC_RPC_ENDPOINTS].filter(
+  (rpc): rpc is string => typeof rpc === 'string' && rpc.trim().length > 0
+);
 const ENS_RECORD_KEYS = ['description', 'url', 'com.twitter', 'com.github'] as const;
 const CACHE_DURATION_MS = 5 * 60 * 1000;
 const ENS_TIMEOUT_MS = 2000;
@@ -49,9 +48,8 @@ export class ENSAdapter {
     }
 
     try {
-      const address = await this.withRpcFallback<string | null>(
-        cacheKey, 'resolveName',
-        (client) => client.getEnsAddress({ name: cacheKey })
+      const address = await this.withRpcFallback<string | null>(cacheKey, 'resolveName', (client) =>
+        client.getEnsAddress({ name: cacheKey })
       );
 
       this.cache[cacheKey] = {
@@ -62,8 +60,15 @@ export class ENSAdapter {
       this.addressFetchedAt[cacheKey] = Date.now();
       return address ?? null;
     } catch (error) {
-      console.error(`[ENS] resolveName failed: ${cacheKey}`, error instanceof Error ? error.message : error);
-      this.cache[cacheKey] = { address: null, records: cachedEntry?.records ?? {}, timestamp: Date.now() };
+      console.error(
+        `[ENS] resolveName failed: ${cacheKey}`,
+        error instanceof Error ? error.message : error
+      );
+      this.cache[cacheKey] = {
+        address: null,
+        records: cachedEntry?.records ?? {},
+        timestamp: Date.now(),
+      };
       this.addressFetchedAt[cacheKey] = Date.now();
       return null;
     }
@@ -85,7 +90,8 @@ export class ENSAdapter {
       ENS_RECORD_KEYS.map(async (key) => {
         try {
           const value = await this.withRpcFallback<string | null>(
-            cacheKey, `getTextRecords(${key})`,
+            cacheKey,
+            `getTextRecords(${key})`,
             (client) => client.getEnsText({ name: cacheKey, key })
           );
           return [key, value] as const;
@@ -101,7 +107,11 @@ export class ENSAdapter {
       }
     }
 
-    this.cache[cacheKey] = { address: cachedEntry?.address ?? null, records, timestamp: Date.now() };
+    this.cache[cacheKey] = {
+      address: cachedEntry?.address ?? null,
+      records,
+      timestamp: Date.now(),
+    };
     this.recordsFetchedAt[cacheKey] = Date.now();
     return { ...records };
   }
@@ -120,7 +130,8 @@ export class ENSAdapter {
   }
 
   private async withRpcFallback<T>(
-    name: string, label: string,
+    name: string,
+    label: string,
     fn: (client: ReturnType<typeof createPublicClient>) => Promise<T>
   ): Promise<T | null> {
     const clientsToTry = [
@@ -131,7 +142,11 @@ export class ENSAdapter {
     for (let index = 0; index < clientsToTry.length; index++) {
       const { rpc, client } = clientsToTry[index]!;
       try {
-        return await withTimeout(fn(client), RPC_ATTEMPT_TIMEOUT_MS, `${label}(${name}) via ${rpc}`);
+        return await withTimeout(
+          fn(client),
+          RPC_ATTEMPT_TIMEOUT_MS,
+          `${label}(${name}) via ${rpc}`
+        );
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         if (msg.includes('timeout')) {

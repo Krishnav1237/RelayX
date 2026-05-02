@@ -25,9 +25,14 @@ export ZEROG_MEMORY_KV_URL="http://<kv-node-or-writer>"
 export ZEROG_MEMORY_LOG_URL="http://<log-writer>"
 export ZEROG_MEMORY_STREAM_ID="relayx.execution.memory"
 
-# Optional — enables LLM reasoning
-export OPENAI_API_KEY="sk-..."
-export OPENAI_MODEL="gpt-4o-mini"   # default
+# Optional — enables LLM reasoning (choose one)
+# OpenRouter (Free tier available)
+export OPENROUTER_API_KEY="your_key_here"
+export OPENROUTER_MODEL="meta-llama/llama-3.1-8b-instruct:free"  # default
+
+# OR Groq (Free tier available)
+export GROQ_API_KEY="your_key_here"
+export GROQ_MODEL="llama-3.1-8b-instant"  # default
 ```
 
 ## Install
@@ -46,6 +51,7 @@ cd backend && npm run dev
 ```
 
 Listens on `http://localhost:3001`. Boot log shows integration status:
+
 ```
 [BOOT] ENS RPC: configured
 [BOOT] AXL base: http://localhost:3005

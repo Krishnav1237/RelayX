@@ -15,7 +15,7 @@ describe('Verification Scenarios', () => {
     expect(r.summary.decisionImpact.axl.length).toBeGreaterThan(0);
 
     // All 4 agents must appear
-    const agents = new Set(r.trace.map(t => t.agent));
+    const agents = new Set(r.trace.map((t) => t.agent));
     expect(agents.has('system.relay.eth')).toBe(true);
     expect(agents.has('yield.relay.eth')).toBe(true);
     expect(agents.has('risk.relay.eth')).toBe(true);
@@ -26,7 +26,7 @@ describe('Verification Scenarios', () => {
     // AXL nodes are down in test env
     const r = await service.execute({ intent: 'get best yield on ETH' });
 
-    const axlTrace = r.trace.find(t => t.message.includes('AXL'));
+    const axlTrace = r.trace.find((t) => t.message.includes('AXL'));
     expect(axlTrace).toBeDefined();
     expect(r.final_result.status).toBe('success');
   });
@@ -103,7 +103,10 @@ describe('Verification Scenarios', () => {
     const debug = r.debug as Record<string, unknown>;
     const breakdown = debug.confidenceBreakdown as Record<string, number>;
 
-    const expected = Math.round(((breakdown.yield ?? 0) + (breakdown.risk ?? 0) + (breakdown.execution ?? 0)) / 3 * 100) / 100;
+    const expected =
+      Math.round(
+        (((breakdown.yield ?? 0) + (breakdown.risk ?? 0) + (breakdown.execution ?? 0)) / 3) * 100
+      ) / 100;
     expect(r.summary.confidence).toBe(expected);
 
     // All within bounds

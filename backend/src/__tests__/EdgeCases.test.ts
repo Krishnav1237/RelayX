@@ -48,7 +48,12 @@ describe('Edge Cases', () => {
     it('ExecutorAgent confidence exactly 0.9', async () => {
       const agent = new ExecutorAgent();
       const trace: AgentTrace[] = [];
-      const { confidence } = await agent.execute({ protocol: 'Aave', apy: 4.2, riskLevel: 'low' }, trace, 1, 1000);
+      const { confidence } = await agent.execute(
+        { protocol: 'Aave', apy: 4.2, riskLevel: 'low' },
+        trace,
+        1,
+        1000
+      );
       expect(confidence).toBe(0.9);
     });
   });
@@ -71,14 +76,22 @@ describe('Edge Cases', () => {
     it('RiskAgent handles zero APY', async () => {
       const agent = new RiskAgent();
       const trace: AgentTrace[] = [];
-      const { result } = await agent.review({ protocol: 'Zero', apy: 0, riskLevel: 'low' }, trace, 1000);
+      const { result } = await agent.review(
+        { protocol: 'Zero', apy: 0, riskLevel: 'low' },
+        trace,
+        1000
+      );
       expect(result.decision).toBe('approve');
     });
 
     it('RiskAgent handles negative APY', async () => {
       const agent = new RiskAgent();
       const trace: AgentTrace[] = [];
-      const { result } = await agent.review({ protocol: 'Neg', apy: -1, riskLevel: 'low' }, trace, 1000);
+      const { result } = await agent.review(
+        { protocol: 'Neg', apy: -1, riskLevel: 'low' },
+        trace,
+        1000
+      );
       expect(result.decision).toBe('approve');
     });
   });
@@ -111,7 +124,10 @@ describe('Edge Cases', () => {
       const agent = new RiskAgent();
       const trace: AgentTrace[] = [];
       const { ensInfluence } = await agent.review(
-        { protocol: 'A', apy: 4.2, riskLevel: 'low' }, trace, 1000, undefined,
+        { protocol: 'A', apy: 4.2, riskLevel: 'low' },
+        trace,
+        1000,
+        undefined,
         { sources: ['a.eth'], resolved: ['a.eth'], reputationScore: 0.9 }
       );
       expect(ensInfluence.tier).toBe('strong');
@@ -121,7 +137,10 @@ describe('Edge Cases', () => {
       const agent = new RiskAgent();
       const trace: AgentTrace[] = [];
       const { ensInfluence } = await agent.review(
-        { protocol: 'A', apy: 4.2, riskLevel: 'low' }, trace, 1000, undefined,
+        { protocol: 'A', apy: 4.2, riskLevel: 'low' },
+        trace,
+        1000,
+        undefined,
         { sources: ['a.eth'], resolved: ['a.eth'], reputationScore: 0.89 }
       );
       expect(ensInfluence.tier).toBe('neutral');
@@ -131,7 +150,10 @@ describe('Edge Cases', () => {
       const agent = new RiskAgent();
       const trace: AgentTrace[] = [];
       const { ensInfluence } = await agent.review(
-        { protocol: 'A', apy: 4.2, riskLevel: 'low' }, trace, 1000, undefined,
+        { protocol: 'A', apy: 4.2, riskLevel: 'low' },
+        trace,
+        1000,
+        undefined,
         { sources: ['a.eth'], resolved: [], reputationScore: 0.69 }
       );
       expect(ensInfluence.tier).toBe('weak');
@@ -141,7 +163,9 @@ describe('Edge Cases', () => {
       const agent = new RiskAgent();
       const trace: AgentTrace[] = [];
       const { ensInfluence } = await agent.review(
-        { protocol: 'A', apy: 4.2, riskLevel: 'low' }, trace, 1000
+        { protocol: 'A', apy: 4.2, riskLevel: 'low' },
+        trace,
+        1000
       );
       expect(ensInfluence.tier).toBe('neutral');
     });

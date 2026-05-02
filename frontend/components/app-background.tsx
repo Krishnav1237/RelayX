@@ -1,21 +1,21 @@
-import { cn } from "@/lib/utils";
+import { cn } from '@/lib/utils';
 
 type AppBackgroundProps = {
-  variant?: "landing" | "dashboard" | "logs";
+  variant?: 'landing' | 'dashboard' | 'logs';
 };
 
-const variantGradient: Record<NonNullable<AppBackgroundProps["variant"]>, string> = {
-  landing: "from-emerald-950/10 via-background to-background dark:from-emerald-950/30",
-  dashboard: "from-emerald-950/10 via-background to-background dark:from-emerald-950/25",
-  logs: "from-cyan-950/10 via-background to-background dark:from-cyan-950/25",
+const variantGradient: Record<NonNullable<AppBackgroundProps['variant']>, string> = {
+  landing: 'from-emerald-950/10 via-background to-background dark:from-emerald-950/30',
+  dashboard: 'from-emerald-950/10 via-background to-background dark:from-emerald-950/25',
+  logs: 'from-cyan-950/10 via-background to-background dark:from-cyan-950/25',
 };
 
-export function AppBackground({ variant = "dashboard" }: AppBackgroundProps) {
+export function AppBackground({ variant = 'dashboard' }: AppBackgroundProps) {
   return (
     <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
       <div
         className={cn(
-          "absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))]",
+          'absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))]',
           variantGradient[variant]
         )}
       />

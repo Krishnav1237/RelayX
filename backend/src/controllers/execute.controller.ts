@@ -4,10 +4,7 @@ import { ExecutionRequest } from '../types';
 
 const executionService = new ExecutionService();
 
-export async function executeHandler(
-  req: Request,
-  res: Response
-): Promise<void> {
+export async function executeHandler(req: Request, res: Response): Promise<void> {
   const startedAt = Date.now();
 
   try {
@@ -24,7 +21,9 @@ export async function executeHandler(
 
     // Section 5: Debug metadata (lightweight — no duplicate execution)
     if (context?.debug === true) {
-      console.log(`[DEBUG] protocol: ${result.summary.finalProtocol}, retried: ${result.summary.wasRetried}, confidence: ${result.summary.confidence}, steps: ${result.trace.length}`);
+      console.log(
+        `[DEBUG] protocol: ${result.summary.finalProtocol}, retried: ${result.summary.wasRetried}, confidence: ${result.summary.confidence}, steps: ${result.trace.length}`
+      );
     }
 
     res.json(result);
@@ -35,10 +34,7 @@ export async function executeHandler(
   }
 }
 
-export async function analyzeHandler(
-  req: Request,
-  res: Response
-): Promise<void> {
+export async function analyzeHandler(req: Request, res: Response): Promise<void> {
   const startedAt = Date.now();
 
   try {
@@ -53,7 +49,9 @@ export async function analyzeHandler(
     const result = await executionService.analyze(request);
 
     if (context?.debug === true) {
-      console.log(`[DEBUG] analysis ready: ${result.summary.finalProtocol}, confidence: ${result.summary.confidence}, steps: ${result.trace.length}`);
+      console.log(
+        `[DEBUG] analysis ready: ${result.summary.finalProtocol}, confidence: ${result.summary.confidence}, steps: ${result.trace.length}`
+      );
     }
 
     res.json(result);
@@ -64,10 +62,7 @@ export async function analyzeHandler(
   }
 }
 
-export async function confirmExecutionHandler(
-  req: Request,
-  res: Response
-): Promise<void> {
+export async function confirmExecutionHandler(req: Request, res: Response): Promise<void> {
   const startedAt = Date.now();
 
   try {

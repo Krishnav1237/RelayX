@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { RiskAgent } from '../agents/RiskAgent';
 import { ExecutionService } from '../orchestrator/ExecutionService';
 import { AgentTrace } from '../types';
-import { ExecutionMemory, ZeroGMemoryAdapter, ZeroGMemoryStore } from '../adapters/ZeroGMemoryAdapter';
+import {
+  ExecutionMemory,
+  ZeroGMemoryAdapter,
+  ZeroGMemoryStore,
+} from '../adapters/ZeroGMemoryAdapter';
 
 class FailingMemoryStore implements ZeroGMemoryStore {
   readonly enabled = true;
@@ -62,11 +66,17 @@ describe('ZeroGMemoryAdapter', () => {
     const agent = new RiskAgent(memory);
     const trace: AgentTrace[] = [];
 
-    const { confidence, result } = await agent.review({ protocol: 'Aave', apy: 4.2, riskLevel: 'low' }, trace, 1000);
+    const { confidence, result } = await agent.review(
+      { protocol: 'Aave', apy: 4.2, riskLevel: 'low' },
+      trace,
+      1000
+    );
 
     expect(result.decision).toBe('approve');
     expect(confidence).toBe(0.9);
-    const memoryTrace = trace.find(entry => entry.message.includes('Memory: Aave has 92% success rate'));
+    const memoryTrace = trace.find((entry) =>
+      entry.message.includes('Memory: Aave has 92% success rate')
+    );
     expect(memoryTrace).toBeDefined();
     expect(memoryTrace!.metadata?.influence).toBe('positive');
   });
@@ -78,13 +88,21 @@ describe('ZeroGMemoryAdapter', () => {
     const agent = new RiskAgent(memory);
     const trace: AgentTrace[] = [];
 
-    const { confidence, result } = await agent.review({ protocol: 'Morpho', apy: 4.1, riskLevel: 'medium' }, trace, 1000);
+    const { confidence, result } = await agent.review(
+      { protocol: 'Morpho', apy: 4.1, riskLevel: 'medium' },
+      trace,
+      1000
+    );
 
     expect(result.decision).toBe('approve');
     expect(result.riskScore).toBe(30);
     expect(confidence).toBe(0.68);
-    expect(result.flags?.some(flag => flag.includes('Memory reports low historical success'))).toBe(true);
-    const memoryTrace = trace.find(entry => entry.message.includes('Memory: Morpho has 42% success rate'));
+    expect(
+      result.flags?.some((flag) => flag.includes('Memory reports low historical success'))
+    ).toBe(true);
+    const memoryTrace = trace.find((entry) =>
+      entry.message.includes('Memory: Morpho has 42% success rate')
+    );
     expect(memoryTrace).toBeDefined();
     expect(memoryTrace!.metadata?.influence).toBe('negative');
   });
@@ -94,20 +112,37 @@ describe('ZeroGMemoryAdapter', () => {
     const agent = new RiskAgent(memory);
     const trace: AgentTrace[] = [];
 
-    const { result } = await agent.review({ protocol: 'Aave', apy: 4.2, riskLevel: 'low' }, trace, 1000);
+    const { result } = await agent.review(
+      { protocol: 'Aave', apy: 4.2, riskLevel: 'low' },
+      trace,
+      1000
+    );
 
     expect(result.decision).toBe('approve');
-    expect(trace.some(entry => entry.message === 'Memory unavailable — proceeding without historical context')).toBe(true);
+    expect(
+      trace.some(
+        (entry) => entry.message === 'Memory unavailable — proceeding without historical context'
+      )
+    ).toBe(true);
   });
 
   it('demo mode uses seeded memory to reject first choice and influence retry', async () => {
     const service = new ExecutionService();
-    const result = await service.execute({ intent: 'get best yield on ETH', context: { demo: true } });
+    const result = await service.execute({
+      intent: 'get best yield on ETH',
+      context: { demo: true },
+    });
 
     expect(result.summary.wasRetried).toBe(true);
     expect(result.summary.initialProtocol).toBe('Morpho');
     expect(result.summary.finalProtocol).toBe('Aave V3');
-    expect(result.trace.some(entry => entry.message.includes('Memory: Morpho has 42% success rate'))).toBe(true);
-    expect(result.trace.some(entry => entry.message.includes('Memory retry preference: selected Aave V3'))).toBe(true);
+    expect(
+      result.trace.some((entry) => entry.message.includes('Memory: Morpho has 42% success rate'))
+    ).toBe(true);
+    expect(
+      result.trace.some((entry) =>
+        entry.message.includes('Memory retry preference: selected Aave V3')
+      )
+    ).toBe(true);
   });
 });

@@ -30,7 +30,7 @@ ENS resolution requires a working Ethereum mainnet RPC. Without `ALCHEMY_MAINNET
 
 ## 8. LLM Is Optional
 
-The ReasoningAdapter requires `OPENAI_API_KEY`. Without it, LLM reasoning is completely disabled. The system works identically without it — LLM only enhances explanations and slightly adjusts confidence.
+The ReasoningAdapter supports OpenRouter or Groq (free tiers available). Without an API key, LLM reasoning is completely disabled. The system works identically without it — LLM only enhances explanations and slightly adjusts confidence.
 
 ## 9. DefiLlama Timeout
 

@@ -14,14 +14,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 type BroadcastPayload = Record<string, unknown> | AXLMessage;
 
 export class AXLAdapter {
-  async sendMessage(target: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async sendMessage(
+    target: string,
+    payload: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
     const body = { target, payload };
     try {
       const response = await this.postJson(AXL_NODES[0]!, '/message', body);
       if (isRecord(response)) return response;
       return { acknowledged: false };
     } catch (error) {
-      console.error('[AXLAdapter] sendMessage failed:', error instanceof Error ? error.message : error);
+      console.error(
+        '[AXLAdapter] sendMessage failed:',
+        error instanceof Error ? error.message : error
+      );
       return { acknowledged: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
@@ -29,7 +35,7 @@ export class AXLAdapter {
   async broadcast(payload: BroadcastPayload): Promise<unknown[]> {
     // Broadcast to ALL nodes in parallel
     const results = await Promise.allSettled(
-      AXL_NODES.map(node => this.postJson(node, '/broadcast', { payload }))
+      AXL_NODES.map((node) => this.postJson(node, '/broadcast', { payload }))
     );
 
     const allResponses: unknown[] = [];
@@ -46,7 +52,9 @@ export class AXLAdapter {
     }
 
     if (allResponses.length > 0) {
-      console.log(`[AXLAdapter] broadcast: ${peersContacted} nodes responded, ${allResponses.length} valid responses`);
+      console.log(
+        `[AXLAdapter] broadcast: ${peersContacted} nodes responded, ${allResponses.length} valid responses`
+      );
     } else {
       console.warn('[AXLAdapter] broadcast: no peers available');
     }
@@ -54,7 +62,11 @@ export class AXLAdapter {
     return allResponses;
   }
 
-  private async postJson(baseUrl: string, path: string, body: Record<string, unknown>): Promise<unknown> {
+  private async postJson(
+    baseUrl: string,
+    path: string,
+    body: Record<string, unknown>
+  ): Promise<unknown> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), AXL_NODE_TIMEOUT_MS);
 

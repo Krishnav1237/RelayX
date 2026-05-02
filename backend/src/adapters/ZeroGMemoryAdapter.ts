@@ -82,7 +82,8 @@ function parseExecutionMemory(value: unknown): ExecutionMemory | null {
   return {
     intent: value.intent,
     selectedProtocol: value.selectedProtocol,
-    rejectedProtocol: typeof value.rejectedProtocol === 'string' ? value.rejectedProtocol : undefined,
+    rejectedProtocol:
+      typeof value.rejectedProtocol === 'string' ? value.rejectedProtocol : undefined,
     confidence: clamp01(value.confidence),
     outcome: value.outcome,
     timestamp: value.timestamp,
@@ -94,7 +95,8 @@ function parseProtocolStats(value: unknown): ProtocolStats | null {
   if (typeof value.protocol !== 'string') return null;
   if (typeof value.successRate !== 'number' || !Number.isFinite(value.successRate)) return null;
   if (typeof value.avgConfidence !== 'number' || !Number.isFinite(value.avgConfidence)) return null;
-  if (typeof value.executionCount !== 'number' || !Number.isInteger(value.executionCount)) return null;
+  if (typeof value.executionCount !== 'number' || !Number.isInteger(value.executionCount))
+    return null;
 
   return {
     protocol: value.protocol,
@@ -146,7 +148,7 @@ export class InMemoryZeroGMemoryStore implements ZeroGMemoryStore {
     return [...this.executions]
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, Math.max(0, limit))
-      .map(execution => ({ ...execution }));
+      .map((execution) => ({ ...execution }));
   }
 
   async getProtocolStats(protocol: string): Promise<ProtocolStats | null> {
@@ -185,10 +187,14 @@ class HttpZeroGMemoryStore implements ZeroGMemoryStore {
       params: [this.streamId, Math.max(0, limit)],
     });
     const result = this.unwrapResult(response);
-    const items = Array.isArray(result) ? result : isRecord(result) && Array.isArray(result.entries) ? result.entries : [];
+    const items = Array.isArray(result)
+      ? result
+      : isRecord(result) && Array.isArray(result.entries)
+        ? result.entries
+        : [];
 
     return items
-      .map(item => parseExecutionMemory(item))
+      .map((item) => parseExecutionMemory(item))
       .filter((item): item is ExecutionMemory => item !== null);
   }
 
@@ -266,15 +272,19 @@ export class ZeroGMemoryAdapter {
 
   constructor(private readonly store: ZeroGMemoryStore = ZeroGMemoryAdapter.createDefaultStore()) {}
 
-  static inMemory(seedStats: ProtocolStats[] = [], seedExecutions: ExecutionMemory[] = []): ZeroGMemoryAdapter {
+  static inMemory(
+    seedStats: ProtocolStats[] = [],
+    seedExecutions: ExecutionMemory[] = []
+  ): ZeroGMemoryAdapter {
     return new ZeroGMemoryAdapter(new InMemoryZeroGMemoryStore(seedStats, seedExecutions));
   }
 
   static demo(): ZeroGMemoryAdapter {
     return ZeroGMemoryAdapter.inMemory([
-      { protocol: 'Morpho', successRate: 0.42, avgConfidence: 0.55, executionCount: 24 },
+      { protocol: 'Morpho Blue', successRate: 0.42, avgConfidence: 0.55, executionCount: 24 },
       { protocol: 'Aave', successRate: 0.94, avgConfidence: 0.91, executionCount: 50 },
       { protocol: 'Aave V3', successRate: 0.94, avgConfidence: 0.91, executionCount: 50 },
+      { protocol: 'Uniswap V4', successRate: 0.75, avgConfidence: 0.8, executionCount: 30 },
     ]);
   }
 
@@ -306,7 +316,9 @@ export class ZeroGMemoryAdapter {
       const executionCount = (existing?.executionCount ?? 0) + 1;
       const previousSuccesses = existing ? existing.successRate * existing.executionCount : 0;
       const successes = previousSuccesses + (normalized.outcome === 'success' ? 1 : 0);
-      const previousConfidenceTotal = existing ? existing.avgConfidence * existing.executionCount : 0;
+      const previousConfidenceTotal = existing
+        ? existing.avgConfidence * existing.executionCount
+        : 0;
 
       await this.store.setProtocolStats({
         protocol: normalized.selectedProtocol,
@@ -354,6 +366,10 @@ export class ZeroGMemoryAdapter {
     const logUrl = process.env.ZEROG_MEMORY_LOG_URL;
     if (!kvUrl || !logUrl) return new DisabledZeroGMemoryStore();
 
-    return new HttpZeroGMemoryStore(kvUrl, logUrl, process.env.ZEROG_MEMORY_STREAM_ID ?? DEFAULT_STREAM_ID);
+    return new HttpZeroGMemoryStore(
+      kvUrl,
+      logUrl,
+      process.env.ZEROG_MEMORY_STREAM_ID ?? DEFAULT_STREAM_ID
+    );
   }
 }

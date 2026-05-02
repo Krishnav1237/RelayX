@@ -1,6 +1,6 @@
 /**
  * Example usage patterns for wallet integration
- * 
+ *
  * These examples show how to integrate wallet functionality
  * with your execution flows and API calls.
  */
@@ -41,18 +41,18 @@ export async function executeWithWallet(intent: string) {
 
 /**
  * Example of using wallet store in a React component:
- * 
+ *
  * import { useWalletStore } from '@/lib/wallet';
- * 
+ *
  * function MyComponent() {
  *   const { isConnected, address, networkType, connect, disconnect } = useWalletStore();
- * 
+ *
  *   const handleExecute = async () => {
  *     if (!isConnected) {
  *       alert('Please connect your wallet first');
  *       return;
  *     }
- * 
+ *
  *     try {
  *       const result = await executeWithWallet('Swap 100 USDC for ETH');
  *       console.log('Execution result:', result);
@@ -60,7 +60,7 @@ export async function executeWithWallet(intent: string) {
  *       console.error('Execution failed:', error);
  *     }
  *   };
- * 
+ *
  *   return (
  *     <div>
  *       {isConnected ? (

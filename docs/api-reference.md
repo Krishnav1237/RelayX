@@ -24,7 +24,9 @@ Tests DefiLlama yield data fetch.
 ```json
 { "status": "ok", "source": "defillama", "protocols": 5 }
 ```
+
 or
+
 ```json
 { "status": "unavailable", "source": "none", "protocols": 0 }
 ```
@@ -36,7 +38,9 @@ Resolves vitalik.eth to verify ENS RPC.
 ```json
 { "status": "ok", "addressResolved": true }
 ```
+
 or
+
 ```json
 { "status": "fallback", "addressResolved": false }
 ```
@@ -59,13 +63,13 @@ Main orchestration endpoint.
 }
 ```
 
-| Field | Required | Description |
-|---|---|---|
-| `intent` | Yes | Non-empty string describing the user's goal |
-| `context.ens` | No | ENS name for reputation lookup |
-| `context.wallet` | No | Wallet address for reverse ENS lookup |
-| `context.demo` | No | Uses seeded memory (Morpho low success, Aave high success) without writing to real 0G |
-| `context.debug` | No | Runs determinism check (logs consistency) |
+| Field            | Required | Description                                                                           |
+| ---------------- | -------- | ------------------------------------------------------------------------------------- |
+| `intent`         | Yes      | Non-empty string describing the user's goal                                           |
+| `context.ens`    | No       | ENS name for reputation lookup                                                        |
+| `context.wallet` | No       | Wallet address for reverse ENS lookup                                                 |
+| `context.demo`   | No       | Uses seeded memory (Morpho low success, Aave high success) without writing to real 0G |
+| `context.debug`  | No       | Runs determinism check (logs consistency)                                             |
 
 ### Response
 
@@ -77,7 +81,10 @@ Main orchestration endpoint.
       "agent": "system.relay.eth",
       "step": "start",
       "message": "Processing intent: \"get best yield on ETH\" — ENS reputation: 0.93",
-      "metadata": { "ensSourcesUsed": ["vitalik.eth", "ens.eth", "nick.eth"], "reputationScore": 0.93 },
+      "metadata": {
+        "ensSourcesUsed": ["vitalik.eth", "ens.eth", "nick.eth"],
+        "reputationScore": 0.93
+      },
       "timestamp": 1710000000000
     },
     {
@@ -91,21 +98,34 @@ Main orchestration endpoint.
       "agent": "risk.relay.eth",
       "step": "review",
       "message": "Reviewing Morpho (4.6% APY, medium risk) — ENS tier: strong (0.93)",
-      "metadata": { "ensInfluence": { "tier": "strong", "reputationScore": 0.93, "effect": "increased tolerance" } },
+      "metadata": {
+        "ensInfluence": {
+          "tier": "strong",
+          "reputationScore": 0.93,
+          "effect": "increased tolerance"
+        }
+      },
       "timestamp": 1710000000060
     },
     {
       "agent": "risk.relay.eth",
       "step": "review",
       "message": "AXL: no peers available — proceeding with local decision",
-      "metadata": { "axlInfluence": { "approvalRatio": 0.5, "decisionImpact": "none", "isSimulated": false } },
+      "metadata": {
+        "axlInfluence": { "approvalRatio": 0.5, "decisionImpact": "none", "isSimulated": false }
+      },
       "timestamp": 1710000000070
     },
     {
       "agent": "risk.relay.eth",
       "step": "review",
       "message": "Memory: Morpho has 42% success rate across 24 executions → decreasing confidence and adding risk",
-      "metadata": { "successRate": 0.42, "executionCount": 24, "avgConfidence": 0.55, "influence": "negative" },
+      "metadata": {
+        "successRate": 0.42,
+        "executionCount": 24,
+        "avgConfidence": 0.55,
+        "influence": "negative"
+      },
       "timestamp": 1710000000080
     },
     {
@@ -124,7 +144,12 @@ Main orchestration endpoint.
       "agent": "system.relay.eth",
       "step": "memory",
       "message": "Memory stored execution outcome for Aave",
-      "metadata": { "selectedProtocol": "Aave", "rejectedProtocol": "Morpho", "confidence": 0.82, "outcome": "success" },
+      "metadata": {
+        "selectedProtocol": "Aave",
+        "rejectedProtocol": "Morpho",
+        "confidence": 0.82,
+        "outcome": "success"
+      },
       "timestamp": 1710000000160
     }
   ],

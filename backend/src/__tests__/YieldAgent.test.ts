@@ -82,7 +82,7 @@ describe('YieldAgent', () => {
     const trace: AgentTrace[] = [];
     await agent.think('get best yield on ETH', 1, trace, 1000);
 
-    const dataEntry = trace.find(t => t.message.includes('yield data'));
+    const dataEntry = trace.find((t) => t.message.includes('yield data'));
     expect(dataEntry).toBeDefined();
   });
 
@@ -91,7 +91,7 @@ describe('YieldAgent', () => {
     const trace: AgentTrace[] = [];
     await agent.think('find best USDC yield', 1, trace, 1000);
 
-    const dataEntry = trace.find(t => t.metadata?.asset !== undefined);
+    const dataEntry = trace.find((t) => t.metadata?.asset !== undefined);
     expect(dataEntry?.metadata?.asset).toBe('USDC');
   });
 });

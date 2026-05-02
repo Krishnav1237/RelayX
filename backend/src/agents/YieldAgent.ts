@@ -2,7 +2,6 @@ import { BaseAgent } from './BaseAgent';
 import { AXLMessage, AgentTrace, YieldOption, YieldThinkResult } from '../types';
 import { AXLAdapter } from '../adapters/AXLAdapter';
 import { YieldDataAdapter } from '../adapters/YieldDataAdapter';
-import { ReasoningAdapter } from '../adapters/ReasoningAdapter';
 
 interface ProtocolComparison {
   protocol: string;
@@ -22,7 +21,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export class YieldAgent extends BaseAgent {
   private axlAdapter = new AXLAdapter();
   private yieldDataAdapter = new YieldDataAdapter();
-  private reasoningAdapter = new ReasoningAdapter();
 
   constructor() {
     super('yield.relay.eth', 'yield.relay.eth');
@@ -38,35 +36,41 @@ export class YieldAgent extends BaseAgent {
     let ts = timestamp;
 
     // Step: analyze intent
-    trace.push(this.log('analyze', `Analyzing user intent: "${intent}"`, { attempt }, ts, externalMetadata));
+    trace.push(
+      this.log('analyze', `Analyzing user intent: "${intent}"`, { attempt }, ts, externalMetadata)
+    );
     ts += 10;
 
     // Fetch live yield data, falling back only to cached upstream data.
     const asset = this.extractAsset(intent);
     let liveOptions = await this.yieldDataAdapter.getYieldOptions(asset);
 
-    liveOptions = liveOptions.filter(o => o.apy > 0 && o.apy <= 50 && o.protocol.length > 0);
-    if (liveOptions.length === 0) {
-      throw new Error(`No DefiLlama yield data available for ${asset}`);
-    }
+    const isLiveData = liveOptions.some((o) => o.source === 'defillama');
+    const sourceLabel = isLiveData
+      ? 'DefiLlama live'
+      : liveOptions.length > 0
+        ? 'cached DefiLlama'
+        : 'no DefiLlama data';
 
-    const isLiveData = liveOptions.some(o => o.source === 'defillama');
-    const sourceLabel = isLiveData ? 'DefiLlama live' : 'cached DefiLlama';
-
-    trace.push(this.log('analyze',
-      `Fetched ${sourceLabel} yield data (${liveOptions.length} protocols)`,
-      {
-        asset,
-        protocols: liveOptions.map(o => ({
-          protocol: o.protocol,
-          apy: o.apy,
-          source: o.source,
-          tvlUsd: o.tvlUsd,
-          poolId: o.poolId,
-        })),
-        isLiveData,
-      },
-      ts, externalMetadata));
+    trace.push(
+      this.log(
+        'analyze',
+        `Fetched ${sourceLabel} yield data (${liveOptions.length} protocols)`,
+        {
+          asset,
+          protocols: liveOptions.map((o) => ({
+            protocol: o.protocol,
+            apy: o.apy,
+            source: o.source,
+            tvlUsd: o.tvlUsd,
+            poolId: o.poolId,
+          })),
+          isLiveData,
+        },
+        ts,
+        externalMetadata
+      )
+    );
     ts += 10;
 
     // Sort by APY descending
@@ -97,25 +101,40 @@ export class YieldAgent extends BaseAgent {
     // Merge: live data takes priority, AXL adds new protocols only
     const sortedOptions = this.mergeAndSortOptions(sortedLocalOptions, remoteOptions);
 
+    if (sortedOptions.length === 0) {
+      throw new Error(
+        `No yield data available for ${asset} (DefiLlama and AXL both returned 0 options)`
+      );
+    }
+
     const axlLabel = hasAXLPeers
       ? `AXL live peers: received ${remoteOptions.length} external yield strategies`
       : 'AXL: no peers available';
-    trace.push(this.log('evaluate', axlLabel, {
-      remoteProtocols: remoteOptions.map(o => o.protocol),
-      peersContacted: remoteResponses.length,
-    }, ts, externalMetadata));
+    trace.push(
+      this.log(
+        'evaluate',
+        axlLabel,
+        {
+          remoteProtocols: remoteOptions.map((o) => o.protocol),
+          peersContacted: remoteResponses.length,
+        },
+        ts,
+        externalMetadata
+      )
+    );
     ts += 10;
 
     // Build comparison narrative
-    const comparisons: ProtocolComparison[] = sortedOptions.map(opt => ({
+    const comparisons: ProtocolComparison[] = sortedOptions.map((opt) => ({
       protocol: opt.protocol,
       apy: opt.apy,
       riskLevel: opt.riskLevel ?? 'unknown',
-      tradeOff: opt.riskLevel === 'low'
-        ? 'lower risk, stable yield'
-        : opt.riskLevel === 'medium'
-          ? 'moderate risk, higher yield potential'
-          : 'higher risk, highest yield potential',
+      tradeOff:
+        opt.riskLevel === 'low'
+          ? 'lower risk, stable yield'
+          : opt.riskLevel === 'medium'
+            ? 'moderate risk, higher yield potential'
+            : 'higher risk, highest yield potential',
     }));
 
     // Select based on attempt number
@@ -127,44 +146,56 @@ export class YieldAgent extends BaseAgent {
     const minApy = sortedOptions[sortedOptions.length - 1]!.apy;
     const apyGap = maxApy - minApy;
 
-    let baseConfidence = 0.7 + (apyGap / 10);
+    let baseConfidence = 0.7 + apyGap / 10;
     if (attempt > 1) baseConfidence += 0.05;
     if (isLiveData) baseConfidence += 0.03; // Slight boost for real data
     const confidence = normalizeConfidence(Math.min(0.95, baseConfidence));
 
     // Build reasoning
     const protocolList = comparisons
-      .map(c => `${c.protocol} (${c.apy}%, ${c.riskLevel} risk)`)
+      .map((c) => `${c.protocol} (${c.apy}%, ${c.riskLevel} risk)`)
       .join(', ');
 
-    const reasoning = attempt === 1
-      ? `Compared ${protocolList}. Selected ${selectedOption.protocol} due to highest yield of ${selectedOption.apy}% APY, despite ${selectedOption.riskLevel ?? 'unknown'} risk profile.`
-      : `Retry attempt ${attempt}: Selected ${selectedOption.protocol} (${selectedOption.apy}% APY, ${selectedOption.riskLevel ?? 'unknown'} risk) as a safer alternative after initial rejection.`;
+    const reasoning =
+      attempt === 1
+        ? `Compared ${protocolList}. Selected ${selectedOption.protocol} due to highest yield of ${selectedOption.apy}% APY, despite ${selectedOption.riskLevel ?? 'unknown'} risk profile.`
+        : `Retry attempt ${attempt}: Selected ${selectedOption.protocol} (${selectedOption.apy}% APY, ${selectedOption.riskLevel ?? 'unknown'} risk) as a safer alternative after initial rejection.`;
 
-    trace.push(this.log('evaluate', `Evaluating yield strategies across ${sortedOptions.length} protocols`, {
-      options: sortedOptions.map(o => ({ protocol: o.protocol, apy: o.apy, riskLevel: o.riskLevel })),
-      comparisons,
-      confidence,
-      isLiveData,
-    }, ts, externalMetadata));
+    trace.push(
+      this.log(
+        'evaluate',
+        `Evaluating yield strategies across ${sortedOptions.length} protocols`,
+        {
+          options: sortedOptions.map((o) => ({
+            protocol: o.protocol,
+            apy: o.apy,
+            riskLevel: o.riskLevel,
+          })),
+          comparisons,
+          confidence,
+          isLiveData,
+        },
+        ts,
+        externalMetadata
+      )
+    );
     ts += 10;
 
-    trace.push(this.log('evaluate', reasoning, {
-      selectedOption,
-      attempt,
-      confidence,
-    }, ts, externalMetadata));
+    trace.push(
+      this.log(
+        'evaluate',
+        reasoning,
+        {
+          selectedOption,
+          attempt,
+          confidence,
+        },
+        ts,
+        externalMetadata
+      )
+    );
 
-    // Phase 6: Optional LLM reasoning enhancement
-    if (this.reasoningAdapter.isEnabled()) {
-      const llmExplanation = await this.reasoningAdapter.explainYield(sortedOptions, selectedOption);
-      if (llmExplanation) {
-        trace.push(this.log('evaluate',
-          `LLM reasoning: ${llmExplanation}`,
-          { llmGenerated: true },
-          ts + 10, externalMetadata));
-      }
-    }
+    // LLM explanation removed - now handled at final stage in ExecutionService
 
     return { options: sortedOptions, selectedOption, reasoning, attempt, confidence };
   }
@@ -178,7 +209,10 @@ export class YieldAgent extends BaseAgent {
     return 'ETH';
   }
 
-  private mergeAndSortOptions(localOptions: YieldOption[], remoteOptions: YieldOption[]): YieldOption[] {
+  private mergeAndSortOptions(
+    localOptions: YieldOption[],
+    remoteOptions: YieldOption[]
+  ): YieldOption[] {
     const mergedByProtocol = new Map<string, YieldOption>();
     for (const option of localOptions) {
       mergedByProtocol.set(option.protocol.trim().toLowerCase(), option);

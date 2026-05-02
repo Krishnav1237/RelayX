@@ -1,11 +1,11 @@
-import type { Metadata } from "next";
-import "./globals.css";
-import { ThemeProvider } from "@/components/theme-provider";
-import { WalletProvider } from "@/components/wallet-provider";
+import type { Metadata } from 'next';
+import './globals.css';
+import { ThemeProvider } from '@/components/theme-provider';
+import { WalletProvider } from '@/components/wallet-provider';
 
 export const metadata: Metadata = {
-  title: "RelayX",
-  description: "Autonomous execution layer",
+  title: 'RelayX',
+  description: 'Autonomous execution layer',
 };
 
 export default function RootLayout({
@@ -22,9 +22,7 @@ export default function RootLayout({
           enableSystem={false}
           disableTransitionOnChange={false}
         >
-          <WalletProvider>
-            {children}
-          </WalletProvider>
+          <WalletProvider>{children}</WalletProvider>
         </ThemeProvider>
       </body>
     </html>

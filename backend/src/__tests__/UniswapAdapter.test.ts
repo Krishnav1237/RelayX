@@ -32,8 +32,16 @@ describe('UniswapAdapter', () => {
   });
 
   it('should cache results on second call', async () => {
-    const q1 = await adapter.getQuote({ tokenIn: 'ETH', tokenOut: 'USDC', amount: '1000000000000000000' });
-    const q2 = await adapter.getQuote({ tokenIn: 'ETH', tokenOut: 'USDC', amount: '1000000000000000000' });
+    const q1 = await adapter.getQuote({
+      tokenIn: 'ETH',
+      tokenOut: 'USDC',
+      amount: '1000000000000000000',
+    });
+    const q2 = await adapter.getQuote({
+      tokenIn: 'ETH',
+      tokenOut: 'USDC',
+      amount: '1000000000000000000',
+    });
 
     expect(q1).not.toBeNull();
     expect(q2).not.toBeNull();

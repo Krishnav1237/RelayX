@@ -27,7 +27,7 @@ describe('Hardening: Stability', () => {
     const r = await service.execute({ intent: 'get best yield on ETH' });
 
     // AXL is down in test env — should still work
-    const axlTrace = r.trace.find(t => t.message.includes('AXL'));
+    const axlTrace = r.trace.find((t) => t.message.includes('AXL'));
     expect(axlTrace).toBeDefined();
     expect(r.final_result.status).toBe('success');
   });
@@ -87,7 +87,7 @@ describe('Hardening: Trace consistency', () => {
     const service = new ExecutionService();
     const r = await service.execute({ intent: 'get best yield on ETH' });
 
-    const agents = new Set(r.trace.map(t => t.agent));
+    const agents = new Set(r.trace.map((t) => t.agent));
     expect(agents.has('system.relay.eth')).toBe(true);
     expect(agents.has('yield.relay.eth')).toBe(true);
     expect(agents.has('risk.relay.eth')).toBe(true);
@@ -143,7 +143,11 @@ describe('Hardening: RiskAgent edge cases', () => {
   it('handles zero APY', async () => {
     const agent = new RiskAgent();
     const trace: AgentTrace[] = [];
-    const { result } = await agent.review({ protocol: 'Zero', apy: 0, riskLevel: 'low' }, trace, 1000);
+    const { result } = await agent.review(
+      { protocol: 'Zero', apy: 0, riskLevel: 'low' },
+      trace,
+      1000
+    );
     expect(result.decision).toBe('approve');
   });
 
@@ -152,21 +156,30 @@ describe('Hardening: RiskAgent edge cases', () => {
 
     const t1: AgentTrace[] = [];
     const { ensInfluence: e1 } = await agent.review(
-      { protocol: 'A', apy: 4.0, riskLevel: 'low' }, t1, 1000, undefined,
+      { protocol: 'A', apy: 4.0, riskLevel: 'low' },
+      t1,
+      1000,
+      undefined,
       { sources: ['a.eth'], resolved: ['a.eth'], reputationScore: 0.9 }
     );
     expect(e1.tier).toBe('strong');
 
     const t2: AgentTrace[] = [];
     const { ensInfluence: e2 } = await agent.review(
-      { protocol: 'A', apy: 4.0, riskLevel: 'low' }, t2, 1000, undefined,
+      { protocol: 'A', apy: 4.0, riskLevel: 'low' },
+      t2,
+      1000,
+      undefined,
       { sources: ['a.eth'], resolved: ['a.eth'], reputationScore: 0.75 }
     );
     expect(e2.tier).toBe('neutral');
 
     const t3: AgentTrace[] = [];
     const { ensInfluence: e3 } = await agent.review(
-      { protocol: 'A', apy: 4.0, riskLevel: 'low' }, t3, 1000, undefined,
+      { protocol: 'A', apy: 4.0, riskLevel: 'low' },
+      t3,
+      1000,
+      undefined,
       { sources: ['a.eth'], resolved: [], reputationScore: 0.5 }
     );
     expect(e3.tier).toBe('weak');

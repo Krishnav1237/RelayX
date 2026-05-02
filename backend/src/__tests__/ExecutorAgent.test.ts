@@ -46,11 +46,11 @@ describe('ExecutorAgent', () => {
 
     await agent.execute(plan, trace, 1, 1000);
 
-    const quoteEntry = trace.find(t => t.step === 'quote');
+    const quoteEntry = trace.find((t) => t.step === 'quote');
     expect(quoteEntry).toBeDefined();
     expect(quoteEntry!.message).toContain('Uniswap');
 
-    const routeEntry = trace.find(t => t.step === 'quote' && t.message.includes('route'));
+    const routeEntry = trace.find((t) => t.step === 'quote' && t.message.includes('route'));
     expect(routeEntry).toBeDefined();
   });
 
@@ -70,7 +70,7 @@ describe('ExecutorAgent', () => {
 
     await agent.execute(plan, trace, 1, 1000);
 
-    const narrativeEntry = trace.find(t => t.message.includes('Deposit successful'));
+    const narrativeEntry = trace.find((t) => t.message.includes('Deposit successful'));
     expect(narrativeEntry).toBeDefined();
   });
 

@@ -28,7 +28,7 @@ describe('Audit S1: Full Pipeline', () => {
     expect(r.summary.confidence).toBeLessThanOrEqual(0.95);
 
     // All agents present
-    const agents = new Set(r.trace.map(t => t.agent));
+    const agents = new Set(r.trace.map((t) => t.agent));
     expect(agents.has('system.relay.eth')).toBe(true);
     expect(agents.has('yield.relay.eth')).toBe(true);
     expect(agents.has('risk.relay.eth')).toBe(true);
@@ -42,7 +42,7 @@ describe('Audit S1: Full Pipeline', () => {
 
   it('should include Uniswap quote in execution', async () => {
     const r = await service.execute({ intent: 'get best yield on ETH' });
-    const quoteTrace = r.trace.find(t => t.step === 'quote');
+    const quoteTrace = r.trace.find((t) => t.step === 'quote');
     expect(quoteTrace).toBeDefined();
     expect(quoteTrace!.message).toContain('Uniswap');
   });
@@ -81,15 +81,27 @@ describe('Audit S2: Edge Case Destruction', () => {
   it('RiskAgent handles extreme APY values', async () => {
     const agent = new RiskAgent();
     const t1: AgentTrace[] = [];
-    const { result: r1 } = await agent.review({ protocol: 'X', apy: 0, riskLevel: 'low' }, t1, 1000);
+    const { result: r1 } = await agent.review(
+      { protocol: 'X', apy: 0, riskLevel: 'low' },
+      t1,
+      1000
+    );
     expect(r1.decision).toBeDefined();
 
     const t2: AgentTrace[] = [];
-    const { result: r2 } = await agent.review({ protocol: 'X', apy: 50, riskLevel: 'low' }, t2, 1000);
+    const { result: r2 } = await agent.review(
+      { protocol: 'X', apy: 50, riskLevel: 'low' },
+      t2,
+      1000
+    );
     expect(r2.decision).toBeDefined();
 
     const t3: AgentTrace[] = [];
-    const { result: r3 } = await agent.review({ protocol: 'X', apy: -5, riskLevel: 'low' }, t3, 1000);
+    const { result: r3 } = await agent.review(
+      { protocol: 'X', apy: -5, riskLevel: 'low' },
+      t3,
+      1000
+    );
     expect(r3.decision).toBeDefined();
   });
 
@@ -117,8 +129,8 @@ describe('Audit S3: Determinism', () => {
       results.push(r);
     }
 
-    const protocols = results.map(r => r.summary.finalProtocol);
-    const retried = results.map(r => r.summary.wasRetried);
+    const protocols = results.map((r) => r.summary.finalProtocol);
+    const retried = results.map((r) => r.summary.wasRetried);
 
     // All should be identical with deterministic fixtures.
     expect(new Set(protocols).size).toBe(1);
@@ -142,7 +154,11 @@ describe('Audit S4: Real Data', () => {
 
   it('UniswapAdapter returns quote with valid price impact', async () => {
     const adapter = new UniswapAdapter();
-    const quote = await adapter.getQuote({ tokenIn: 'ETH', tokenOut: 'USDC', amount: '1000000000000000000' });
+    const quote = await adapter.getQuote({
+      tokenIn: 'ETH',
+      tokenOut: 'USDC',
+      amount: '1000000000000000000',
+    });
     expect(quote).not.toBeNull();
     expect(quote!.priceImpact).toBeGreaterThanOrEqual(0);
     expect(quote!.priceImpact).toBeLessThanOrEqual(100);
@@ -165,22 +181,25 @@ describe('Audit S5: Trace Quality', () => {
     const r = await service.execute({ intent: 'get best yield on ETH' });
 
     // Should have explanatory messages, not just "executing"
-    const hasExplanation = r.trace.some(t =>
-      t.message.includes('due to') ||
-      t.message.includes('Selected') ||
-      t.message.includes('Approved') ||
-      t.message.includes('Rejected') ||
-      t.message.includes('Retrying')
+    const hasExplanation = r.trace.some(
+      (t) =>
+        t.message.includes('due to') ||
+        t.message.includes('Selected') ||
+        t.message.includes('Approved') ||
+        t.message.includes('Rejected') ||
+        t.message.includes('Retrying')
     );
     expect(hasExplanation).toBe(true);
   });
 
   it('Uniswap trace includes route information', async () => {
     const r = await service.execute({ intent: 'get best yield on ETH' });
-    const uniTraces = r.trace.filter(t => t.step === 'quote');
+    const uniTraces = r.trace.filter((t) => t.step === 'quote');
     expect(uniTraces.length).toBeGreaterThanOrEqual(2);
     // Second quote entry should have route details
-    const routeTrace = uniTraces.find(t => t.message.includes('route') || t.message.includes('unavailable'));
+    const routeTrace = uniTraces.find(
+      (t) => t.message.includes('route') || t.message.includes('unavailable')
+    );
     expect(routeTrace).toBeDefined();
   });
 });
@@ -218,7 +237,10 @@ describe('Audit S8: Security + Sanity', () => {
     const debug = r.debug as Record<string, unknown>;
     const breakdown = debug.confidenceBreakdown as Record<string, number>;
 
-    const avg = Math.round(((breakdown.yield ?? 0) + (breakdown.risk ?? 0) + (breakdown.execution ?? 0)) / 3 * 100) / 100;
+    const avg =
+      Math.round(
+        (((breakdown.yield ?? 0) + (breakdown.risk ?? 0) + (breakdown.execution ?? 0)) / 3) * 100
+      ) / 100;
     expect(r.summary.confidence).toBe(avg);
   });
 });
@@ -253,15 +275,15 @@ describe('Audit S11: Demo Readiness', () => {
 
     // Retry visible
     expect(r.summary.wasRetried).toBe(true);
-    const retryTrace = r.trace.find(t => t.step === 'retry');
+    const retryTrace = r.trace.find((t) => t.step === 'retry');
     expect(retryTrace).toBeDefined();
 
     // ENS visible
-    const ensTrace = r.trace.find(t => t.message.includes('ENS'));
+    const ensTrace = r.trace.find((t) => t.message.includes('ENS'));
     expect(ensTrace).toBeDefined();
 
     // Uniswap visible
-    const uniTrace = r.trace.find(t => t.step === 'quote');
+    const uniTrace = r.trace.find((t) => t.step === 'quote');
     expect(uniTrace).toBeDefined();
 
     // Decision impact present

@@ -1,11 +1,11 @@
-"use client";
+'use client';
 
-import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Wallet, Copy, LogOut, Check, ChevronDown } from "lucide-react";
-import { useWalletStore } from "@/lib/wallet/store";
-import { WalletConnectModal } from "./wallet-connect-modal";
-import { shortenAddress, copyToClipboard, getNetworkName, getWalletIcon } from "@/lib/wallet/utils";
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Wallet, Copy, LogOut, Check, ChevronDown } from 'lucide-react';
+import { useWalletStore } from '@/lib/wallet/store';
+import { WalletConnectModal } from './wallet-connect-modal';
+import { shortenAddress, copyToClipboard, getNetworkName, getWalletIcon } from '@/lib/wallet/utils';
 
 export function WalletButton() {
   const { isConnected, address, disconnect, networkType, walletType } = useWalletStore();
@@ -26,7 +26,7 @@ export function WalletButton() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      console.error("Failed to copy address:", error);
+      console.error('Failed to copy address:', error);
     }
   };
 
@@ -52,9 +52,7 @@ export function WalletButton() {
 
   // Prevent hydration mismatch
   if (!mounted) {
-    return (
-      <div className="h-9 w-32 animate-pulse rounded-full bg-accent" />
-    );
+    return <div className="h-9 w-32 animate-pulse rounded-full bg-accent" />;
   }
 
   if (!isConnected || !address) {

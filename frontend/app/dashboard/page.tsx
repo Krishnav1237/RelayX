@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronDown,
   ChevronUp,
@@ -15,11 +15,11 @@ import {
   RefreshCw,
   X,
   Wallet,
-} from "lucide-react";
-import { AppBackground } from "@/components/app-background";
-import { ExecutionFloatingPanel } from "@/components/execution-floating-panel";
-import { Navbar } from "@/components/navbar";
-import { useWalletStore } from "@/lib/wallet";
+} from 'lucide-react';
+import { AppBackground } from '@/components/app-background';
+import { ExecutionFloatingPanel } from '@/components/execution-floating-panel';
+import { Navbar } from '@/components/navbar';
+import { useWalletStore } from '@/lib/wallet';
 import {
   buildTerminalStatusEvents,
   loadExecutionSession,
@@ -33,8 +33,8 @@ import {
   type ExecutionResponse,
   type ExecutionSessionSnapshot,
   type TerminalStatusEvent,
-} from "@/lib/execution";
-import { cn } from "@/lib/utils";
+} from '@/lib/execution';
+import { cn } from '@/lib/utils';
 
 interface DashboardError {
   id: string;
@@ -50,7 +50,7 @@ export default function Dashboard() {
   const terminalScrollRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const hasRestoredSessionRef = useRef(false);
-  const [intent, setIntent] = useState("");
+  const [intent, setIntent] = useState('');
   const [demoMode, setDemoMode] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [lastRequestContext, setLastRequestContext] = useState<ExecutionRequestContext>({});
@@ -73,7 +73,7 @@ export default function Dashboard() {
     try {
       return buildTerminalStatusEvents(visibleTraces.filter(Boolean));
     } catch (e) {
-      console.error("Failed to build terminal events:", e);
+      console.error('Failed to build terminal events:', e);
       return [];
     }
   }, [visibleTraces]);
@@ -98,51 +98,54 @@ export default function Dashboard() {
 
   const toggleErrorDetails = (id: string) => {
     setErrors((current) =>
-      current.map((error) =>
-        error.id === id ? { ...error, expanded: !error.expanded } : error
-      )
+      current.map((error) => (error.id === id ? { ...error, expanded: !error.expanded } : error))
     );
   };
 
-  const getSessionSnapshot = useCallback((
-    overrides: Partial<ExecutionSessionSnapshot> = {}
-  ): ExecutionSessionSnapshot => ({
-    intent,
-    demoMode,
-    debugMode,
-    requestContext: lastRequestContext,
-    response,
-    visibleTraces,
-    streamQueue,
-    isStreaming,
-    showSummary,
-    approvalCancelled,
-    resultPanelCollapsed,
-    resultPanelDismissed,
-    ...overrides,
-  }), [
-    intent,
-    demoMode,
-    debugMode,
-    lastRequestContext,
-    response,
-    visibleTraces,
-    streamQueue,
-    isStreaming,
-    showSummary,
-    approvalCancelled,
-    resultPanelCollapsed,
-    resultPanelDismissed,
-  ]);
+  const getSessionSnapshot = useCallback(
+    (overrides: Partial<ExecutionSessionSnapshot> = {}): ExecutionSessionSnapshot => ({
+      intent,
+      demoMode,
+      debugMode,
+      requestContext: lastRequestContext,
+      response,
+      visibleTraces,
+      streamQueue,
+      isStreaming,
+      showSummary,
+      approvalCancelled,
+      resultPanelCollapsed,
+      resultPanelDismissed,
+      ...overrides,
+    }),
+    [
+      intent,
+      demoMode,
+      debugMode,
+      lastRequestContext,
+      response,
+      visibleTraces,
+      streamQueue,
+      isStreaming,
+      showSummary,
+      approvalCancelled,
+      resultPanelCollapsed,
+      resultPanelDismissed,
+    ]
+  );
 
   useEffect(() => {
     const restoreTimer = window.setTimeout(() => {
       const savedSession = loadExecutionSession();
 
       if (savedSession) {
-        const shouldResumeStreaming = savedSession.isStreaming && savedSession.streamQueue.length > 0;
-        const shouldShowSummary = savedSession.showSummary
-          || Boolean(savedSession.response && !shouldResumeStreaming && savedSession.visibleTraces.length > 0);
+        const shouldResumeStreaming =
+          savedSession.isStreaming && savedSession.streamQueue.length > 0;
+        const shouldShowSummary =
+          savedSession.showSummary ||
+          Boolean(
+            savedSession.response && !shouldResumeStreaming && savedSession.visibleTraces.length > 0
+          );
 
         setIntent(savedSession.intent);
         setDemoMode(savedSession.demoMode);
@@ -191,14 +194,15 @@ export default function Dashboard() {
     if (debugMode) context.debug = true;
     setLastRequestContext(context);
 
-    const body: ExecutionRequest = Object.keys(context).length > 0
-      ? { intent: intent.trim(), context }
-      : { intent: intent.trim() };
+    const body: ExecutionRequest =
+      Object.keys(context).length > 0
+        ? { intent: intent.trim(), context }
+        : { intent: intent.trim() };
 
     try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
 
@@ -210,20 +214,22 @@ export default function Dashboard() {
       setResponse(data);
       setStreamQueue(data.trace);
       saveExecutionLog(data);
-      saveExecutionSession(getSessionSnapshot({
-        intent: body.intent,
-        demoMode,
-        debugMode,
-        requestContext: context,
-        response: data,
-        visibleTraces: [],
-        streamQueue: data.trace,
-        isStreaming: true,
-        showSummary: false,
-        approvalCancelled: false,
-        resultPanelCollapsed: false,
-        resultPanelDismissed: false,
-      }));
+      saveExecutionSession(
+        getSessionSnapshot({
+          intent: body.intent,
+          demoMode,
+          debugMode,
+          requestContext: context,
+          response: data,
+          visibleTraces: [],
+          streamQueue: data.trace,
+          isStreaming: true,
+          showSummary: false,
+          approvalCancelled: false,
+          resultPanelCollapsed: false,
+          resultPanelDismissed: false,
+        })
+      );
       setIsStreaming(true);
     } catch (error) {
       console.error(error);
@@ -244,9 +250,9 @@ export default function Dashboard() {
     setResultPanelDismissed(false);
 
     try {
-      const res = await fetch("/api/execute/confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch('/api/execute/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approvalId: response.approval.id }),
       });
 
@@ -259,15 +265,17 @@ export default function Dashboard() {
       setResponse(data);
       setStreamQueue(newTraces.length > 0 ? newTraces : data.trace);
       saveExecutionLog(data);
-      saveExecutionSession(getSessionSnapshot({
-        response: data,
-        streamQueue: newTraces.length > 0 ? newTraces : data.trace,
-        isStreaming: true,
-        showSummary: false,
-        approvalCancelled: false,
-        resultPanelCollapsed: false,
-        resultPanelDismissed: false,
-      }));
+      saveExecutionSession(
+        getSessionSnapshot({
+          response: data,
+          streamQueue: newTraces.length > 0 ? newTraces : data.trace,
+          isStreaming: true,
+          showSummary: false,
+          approvalCancelled: false,
+          resultPanelCollapsed: false,
+          resultPanelDismissed: false,
+        })
+      );
       setIsStreaming(true);
     } catch (error) {
       console.error(error);
@@ -282,12 +290,14 @@ export default function Dashboard() {
   const handleCancelApproval = () => {
     setApprovalCancelled(true);
     setShowSummary(true);
-    saveExecutionSession(getSessionSnapshot({
-      approvalCancelled: true,
-      showSummary: true,
-      resultPanelCollapsed: false,
-      resultPanelDismissed: false,
-    }));
+    saveExecutionSession(
+      getSessionSnapshot({
+        approvalCancelled: true,
+        showSummary: true,
+        resultPanelCollapsed: false,
+        resultPanelDismissed: false,
+      })
+    );
   };
 
   const toggleResultPanelCollapsed = () => {
@@ -331,14 +341,15 @@ export default function Dashboard() {
     const frame = window.requestAnimationFrame(() => {
       terminal.scrollTo({
         top: terminal.scrollHeight,
-        behavior: terminalEvents.length > 1 ? "smooth" : "auto",
+        behavior: terminalEvents.length > 1 ? 'smooth' : 'auto',
       });
     });
 
     return () => window.cancelAnimationFrame(frame);
   }, [terminalEvents.length, isStreaming, isSubmitting]);
 
-  const hasVisibleAgent = (agent: string) => visibleTraces.some((trace) => trace && normalizeAgentName(trace.agent) === agent);
+  const hasVisibleAgent = (agent: string) =>
+    visibleTraces.some((trace) => trace && normalizeAgentName(trace.agent) === agent);
   const isSubmitDisabled = !intent.trim() || isSubmitting || isStreaming || isApproving;
 
   return (
@@ -355,7 +366,8 @@ export default function Dashboard() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Execution Engine</h1>
             <p className="relay-muted mt-2 max-w-2xl">
-              Enter your financial intent, review the agent recommendation, then approve final execution.
+              Enter your financial intent, review the agent recommendation, then approve final
+              execution.
             </p>
           </div>
         </header>
@@ -380,7 +392,7 @@ export default function Dashboard() {
                 disabled={isSubmitDisabled}
                 className="relay-button-primary min-h-12 px-6 sm:m-1"
               >
-                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Execute"}
+                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Execute'}
               </button>
             </div>
 
@@ -425,11 +437,11 @@ export default function Dashboard() {
               {(isStreaming || isSubmitting || isApproving) && (
                 <div className="flex items-center gap-2 text-xs font-mono text-zinc-500">
                   <RefreshCw className="h-3 w-3 animate-spin" />
-                  <span>{isApproving ? "Executing..." : "Processing..."}</span>
+                  <span>{isApproving ? 'Executing...' : 'Processing...'}</span>
                 </div>
               )}
             </div>
-            
+
             <div
               ref={terminalScrollRef}
               onScroll={handleTerminalScroll}
@@ -446,11 +458,11 @@ export default function Dashboard() {
                 {terminalEvents.map((event, idx) => (
                   <TerminalStatusRow event={event} key={`${event.timestamp}-${idx}`} />
                 ))}
-                
+
                 {isStreaming && (
-                  <motion.div 
-                    initial={{ opacity: 0 }} 
-                    animate={{ opacity: 1 }} 
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
                     className="pl-[100px] flex gap-1 items-center h-6 text-zinc-400 dark:text-zinc-500"
                   >
                     <span className="animate-pulse">_</span>
@@ -474,9 +486,7 @@ export default function Dashboard() {
                     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">
                       Network: {networkType === 'ethereum' ? 'Ethereum' : 'Solana'}
                     </div>
-                    <div className="font-mono text-sm text-foreground break-all">
-                      {address}
-                    </div>
+                    <div className="font-mono text-sm text-foreground break-all">{address}</div>
                   </div>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     Your wallet is ready for execution
@@ -492,10 +502,26 @@ export default function Dashboard() {
                 Network Agents
               </h3>
               <div className="space-y-3">
-                <AgentStatusItem agent="system.relay.eth" icon={<Play className="h-4 w-4 text-cyan-500" />} active={isSubmitting || isStreaming || hasVisibleAgent("system.relay.eth")} />
-                <AgentStatusItem agent="yield.relay.eth" icon={<Zap className="h-4 w-4 text-emerald-500" />} active={isStreaming && hasVisibleAgent("yield.relay.eth")} />
-                <AgentStatusItem agent="risk.relay.eth" icon={<Shield className="h-4 w-4 text-teal-500" />} active={isStreaming && hasVisibleAgent("risk.relay.eth")} />
-                <AgentStatusItem agent="executor.relay.eth" icon={<Terminal className="h-4 w-4 text-sky-500" />} active={(isStreaming || isApproving) && hasVisibleAgent("executor.relay.eth")} />
+                <AgentStatusItem
+                  agent="system.relay.eth"
+                  icon={<Play className="h-4 w-4 text-cyan-500" />}
+                  active={isSubmitting || isStreaming || hasVisibleAgent('system.relay.eth')}
+                />
+                <AgentStatusItem
+                  agent="yield.relay.eth"
+                  icon={<Zap className="h-4 w-4 text-emerald-500" />}
+                  active={isStreaming && hasVisibleAgent('yield.relay.eth')}
+                />
+                <AgentStatusItem
+                  agent="risk.relay.eth"
+                  icon={<Shield className="h-4 w-4 text-teal-500" />}
+                  active={isStreaming && hasVisibleAgent('risk.relay.eth')}
+                />
+                <AgentStatusItem
+                  agent="executor.relay.eth"
+                  icon={<Terminal className="h-4 w-4 text-sky-500" />}
+                  active={(isStreaming || isApproving) && hasVisibleAgent('executor.relay.eth')}
+                />
               </div>
             </div>
           </div>
@@ -514,11 +540,7 @@ export default function Dashboard() {
           response={response}
         />
       )}
-      <ErrorStack
-        errors={errors}
-        onDismiss={dismissError}
-        onToggleDetails={toggleErrorDetails}
-      />
+      <ErrorStack errors={errors} onDismiss={dismissError} onToggleDetails={toggleErrorDetails} />
     </div>
   );
 }
@@ -528,18 +550,16 @@ function TerminalStatusRow({ event }: { event: TerminalStatusEvent }) {
     <motion.div
       initial={{ opacity: 0, x: -10 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.22, ease: "easeOut" }}
+      transition={{ duration: 0.22, ease: 'easeOut' }}
       className="flex flex-col gap-1 rounded-lg border border-transparent p-2 text-zinc-700 transition-colors hover:border-emerald-500/10 hover:bg-emerald-500/5 dark:text-zinc-300"
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-zinc-400 dark:text-zinc-500">
-          [{new Date(event.timestamp).toISOString().split("T")[1].slice(0, -1)}]
+          [{new Date(event.timestamp).toISOString().split('T')[1].slice(0, -1)}]
         </span>
         <AgentBadge agent={event.agent} />
       </div>
-      <div className="pl-0 sm:pl-[100px] text-zinc-600 dark:text-zinc-400">
-        {event.message}
-      </div>
+      <div className="pl-0 sm:pl-[100px] text-zinc-600 dark:text-zinc-400">{event.message}</div>
     </motion.div>
   );
 }
@@ -567,7 +587,7 @@ function ErrorStack({
             tabIndex={0}
             onClick={() => onToggleDetails(error.id)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
+              if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 onToggleDetails(error.id);
               }
@@ -575,7 +595,7 @@ function ErrorStack({
             initial={{ opacity: 0, x: 28, y: 12, scale: 0.96 }}
             animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
             exit={{ opacity: 0, x: 28, scale: 0.96 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
             className="pointer-events-auto cursor-pointer overflow-hidden rounded-lg border border-red-500/25 bg-card/95 shadow-xl shadow-red-500/10 outline-none backdrop-blur-md transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-400/40 hover:shadow-orange-500/10 focus-visible:ring-2 focus-visible:ring-orange-400/50"
           >
             <div className="h-0.5 bg-gradient-to-r from-red-500 via-orange-400 to-cyan-400" />
@@ -588,18 +608,26 @@ function ErrorStack({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <h4 className="truncate text-sm font-semibold text-foreground">{error.title}</h4>
-                      <p className={cn(
-                        "mt-0.5 text-sm text-zinc-600 dark:text-zinc-400",
-                        !error.expanded && "truncate"
-                      )}>
+                      <h4 className="truncate text-sm font-semibold text-foreground">
+                        {error.title}
+                      </h4>
+                      <p
+                        className={cn(
+                          'mt-0.5 text-sm text-zinc-600 dark:text-zinc-400',
+                          !error.expanded && 'truncate'
+                        )}
+                      >
                         {error.message}
                       </p>
                     </div>
 
                     <div className="flex shrink-0 items-center gap-1">
                       <span className="text-zinc-500">
-                        {error.expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                        {error.expanded ? (
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        ) : (
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        )}
                       </span>
                       <button
                         type="button"
@@ -620,7 +648,7 @@ function ErrorStack({
                       {new Date(error.createdAt).toLocaleTimeString()}
                     </span>
                     <span className="text-[11px] text-zinc-500 dark:text-zinc-500">
-                      {error.expanded ? "Click to collapse" : "Click to expand"}
+                      {error.expanded ? 'Click to collapse' : 'Click to expand'}
                     </span>
                   </div>
 
@@ -628,7 +656,7 @@ function ErrorStack({
                     {error.expanded && (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
+                        animate={{ opacity: 1, height: 'auto' }}
                         exit={{ opacity: 0, height: 0 }}
                         className="overflow-hidden"
                       >
@@ -652,28 +680,55 @@ function ErrorStack({
 
 function AgentBadge({ agent }: { agent: string }) {
   const normalizedAgent = normalizeAgentName(agent);
-  let colorClass = "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-transparent";
-  
-  if (normalizedAgent === "system.relay.eth") colorClass = "bg-cyan-50 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border-cyan-200 dark:border-cyan-500/30";
-  if (normalizedAgent === "yield.relay.eth") colorClass = "bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30";
-  if (normalizedAgent === "risk.relay.eth") colorClass = "bg-teal-50 dark:bg-teal-500/20 text-teal-600 dark:text-teal-400 border-teal-200 dark:border-teal-500/30";
-  if (normalizedAgent === "executor.relay.eth") colorClass = "bg-sky-50 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400 border-sky-200 dark:border-sky-500/30";
+  let colorClass =
+    'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-transparent';
+
+  if (normalizedAgent === 'system.relay.eth')
+    colorClass =
+      'bg-cyan-50 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border-cyan-200 dark:border-cyan-500/30';
+  if (normalizedAgent === 'yield.relay.eth')
+    colorClass =
+      'bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30';
+  if (normalizedAgent === 'risk.relay.eth')
+    colorClass =
+      'bg-teal-50 dark:bg-teal-500/20 text-teal-600 dark:text-teal-400 border-teal-200 dark:border-teal-500/30';
+  if (normalizedAgent === 'executor.relay.eth')
+    colorClass =
+      'bg-sky-50 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400 border-sky-200 dark:border-sky-500/30';
 
   return (
-    <span className={cn("px-2 py-0.5 rounded text-xs border font-medium", colorClass)}>
+    <span className={cn('px-2 py-0.5 rounded text-xs border font-medium', colorClass)}>
       {normalizedAgent}
     </span>
   );
 }
 
-function AgentStatusItem({ agent, icon, active }: { agent: string, icon: React.ReactNode, active: boolean }) {
+function AgentStatusItem({
+  agent,
+  icon,
+  active,
+}: {
+  agent: string;
+  icon: React.ReactNode;
+  active: boolean;
+}) {
   return (
-    <div className={cn("flex items-center justify-between rounded-lg border p-2 transition-all duration-200 hover:border-emerald-500/20 hover:bg-accent/40", active ? "border-emerald-500/20 bg-emerald-500/10" : "border-transparent")}>
+    <div
+      className={cn(
+        'flex items-center justify-between rounded-lg border p-2 transition-all duration-200 hover:border-emerald-500/20 hover:bg-accent/40',
+        active ? 'border-emerald-500/20 bg-emerald-500/10' : 'border-transparent'
+      )}
+    >
       <div className="flex items-center gap-3">
-        <div className={cn("flex h-8 w-8 items-center justify-center rounded-md", active ? "bg-background shadow-sm" : "bg-transparent text-zinc-500")}>
+        <div
+          className={cn(
+            'flex h-8 w-8 items-center justify-center rounded-md',
+            active ? 'bg-background shadow-sm' : 'bg-transparent text-zinc-500'
+          )}
+        >
           {icon}
         </div>
-        <span className={cn("text-sm font-medium", !active && "text-zinc-500")}>{agent}</span>
+        <span className={cn('text-sm font-medium', !active && 'text-zinc-500')}>{agent}</span>
       </div>
       {active && <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></div>}
     </div>
@@ -683,7 +738,7 @@ function AgentStatusItem({ agent, icon, active }: { agent: string, icon: React.R
 function createDashboardError(error: unknown): DashboardError {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    title: "Execution Failed",
+    title: 'Execution Failed',
     message: getDashboardErrorMessage(error),
     details: getDashboardErrorDetails(error),
     expanded: false,
@@ -696,11 +751,11 @@ function getDashboardErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  if (typeof error === "string" && error.trim().length > 0) {
+  if (typeof error === 'string' && error.trim().length > 0) {
     return error;
   }
 
-  return "The execution request could not be completed. You can keep using the dashboard.";
+  return 'The execution request could not be completed. You can keep using the dashboard.';
 }
 
 function getDashboardErrorDetails(error: unknown): string | undefined {
@@ -708,7 +763,7 @@ function getDashboardErrorDetails(error: unknown): string | undefined {
     return error.stack && error.stack !== error.message ? error.stack : undefined;
   }
 
-  if (typeof error === "string") {
+  if (typeof error === 'string') {
     return undefined;
   }
 
@@ -721,8 +776,8 @@ function getDashboardErrorDetails(error: unknown): string | undefined {
 
 async function getExecutionErrorMessage(response: Response): Promise<string> {
   try {
-    const payload = await response.json() as unknown;
-    if (isRecord(payload) && typeof payload.error === "string") {
+    const payload = (await response.json()) as unknown;
+    if (isRecord(payload) && typeof payload.error === 'string') {
       return payload.error;
     }
   } catch {
@@ -733,5 +788,5 @@ async function getExecutionErrorMessage(response: Response): Promise<string> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === 'object' && value !== null;
 }

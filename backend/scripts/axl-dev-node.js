@@ -8,6 +8,20 @@ const PEER_URLS = (process.env.AXL_PEER_URLS ?? '')
   .filter((url) => url.length > 0);
 const PEER_TIMEOUT_MS = Number(process.env.AXL_PEER_TIMEOUT_MS ?? 1500);
 
+const MOCK_PEER_RESPONSES = {
+  yield_request: [
+    { responder: 'peer-alpha.eth', option: { protocol: 'Aave V3', apy: 4.8, riskLevel: 'low' } },
+    {
+      responder: 'peer-beta.eth',
+      option: { protocol: 'Morpho Blue', apy: 5.2, riskLevel: 'medium' },
+    },
+  ],
+  risk_request: [
+    { responder: 'peer-gamma.eth', decision: 'approve', confidence: 0.92 },
+    { responder: 'peer-delta.eth', decision: 'approve', confidence: 0.88 },
+  ],
+};
+
 function sendJson(res, statusCode, data) {
   const body = JSON.stringify(data);
   res.writeHead(statusCode, {
@@ -57,7 +71,11 @@ async function postJson(baseUrl, path, body) {
     }
     return { ok: true, peer: baseUrl, body: await response.json() };
   } catch (error) {
-    return { ok: false, peer: baseUrl, error: error instanceof Error ? error.message : String(error) };
+    return {
+      ok: false,
+      peer: baseUrl,
+      error: error instanceof Error ? error.message : String(error),
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -89,7 +107,11 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
   if (req.method === 'GET' && url.pathname === '/health') {
-    sendJson(res, 200, { status: 'ok', service: 'axl-dev-node', peersConfigured: PEER_URLS.length });
+    sendJson(res, 200, {
+      status: 'ok',
+      service: 'axl-dev-node',
+      peersConfigured: PEER_URLS.length,
+    });
     return;
   }
 
@@ -113,10 +135,26 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJson(req);
       const peerResults = await forwardToPeers('/broadcast', body);
+
+      let responses = extractPeerResponses(peerResults);
+
+      // Standalone Simulation Mode: If no real peers responded, provide mock data
+      if (responses.length === 0 && body.payload && typeof body.payload.type === 'string') {
+        const type = body.payload.type;
+        const mockData = MOCK_PEER_RESPONSES[type];
+        if (mockData) {
+          console.log(
+            `[AXL DEV NODE] Solo Mode: Simulating ${mockData.length} peer responses for ${type}`
+          );
+          responses = mockData;
+        }
+      }
+
       sendJson(res, 200, {
-        responses: extractPeerResponses(peerResults),
+        responses,
         responder: 'axl-dev-node',
         peersConfigured: PEER_URLS.length,
+        simulationMode: responses.length > 0 && PEER_URLS.length === 0,
       });
     } catch (error) {
       sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });

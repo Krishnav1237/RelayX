@@ -52,7 +52,10 @@ describe('ExecutionService', () => {
     const r = await service.execute({ intent: 'get best yield on ETH' });
     const debug = r.debug as Record<string, unknown>;
     const breakdown = debug.confidenceBreakdown as Record<string, number>;
-    const expected = Math.round(((breakdown.yield ?? 0) + (breakdown.risk ?? 0) + (breakdown.execution ?? 0)) / 3 * 100) / 100;
+    const expected =
+      Math.round(
+        (((breakdown.yield ?? 0) + (breakdown.risk ?? 0) + (breakdown.execution ?? 0)) / 3) * 100
+      ) / 100;
     expect(r.summary.confidence).toBe(expected);
   });
 

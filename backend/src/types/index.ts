@@ -44,6 +44,7 @@ export interface AXLInfluence {
 export interface DecisionImpact {
   ens: string;
   axl: string;
+  memory?: string;
 }
 
 export interface ExecutionSummary {
@@ -103,6 +104,14 @@ export interface YieldThinkResult {
   attempt: number;
 }
 
+export interface MemoryInfluence {
+  protocol: string;
+  hasHistory: boolean;
+  impact: 'boosted' | 'penalized' | 'neutral';
+  successRate: number;
+  executionCount: number;
+}
+
 export interface RiskReviewResult {
   decision: 'approve' | 'reject';
   reasoning: string;
@@ -110,6 +119,7 @@ export interface RiskReviewResult {
   flags?: string[];
   ensInfluence?: ENSInfluence;
   axlInfluence?: AXLInfluence;
+  memoryInfluence?: MemoryInfluence;
 }
 
 export interface ENSReputationContext {

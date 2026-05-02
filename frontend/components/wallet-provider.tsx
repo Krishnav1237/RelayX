@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useAutoConnect } from "@/lib/wallet/hooks/useAutoConnect";
+import { useAutoConnect } from '@/lib/wallet/hooks/useAutoConnect';
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   useAutoConnect();

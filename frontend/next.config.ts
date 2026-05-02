@@ -1,4 +1,4 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   async rewrites() {
@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
         source: '/api/:path*',
         destination: 'http://localhost:3001/:path*',
       },
-    ]
+    ];
   },
 };
 

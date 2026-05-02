@@ -1,6 +1,6 @@
 /**
  * Integration utilities for using wallet data in execution flows
- * 
+ *
  * These functions demonstrate how to access wallet information
  * for use in backend API calls and execution logic.
  */
@@ -9,7 +9,7 @@ import { useWalletStore } from './store';
 
 /**
  * Get the current wallet state for use in API calls
- * 
+ *
  * @example
  * const walletInfo = getWalletInfo();
  * if (walletInfo.isConnected) {
@@ -53,12 +53,12 @@ export function requireWalletAddress(): string {
 
 /**
  * Subscribe to wallet state changes
- * 
+ *
  * @example
  * const unsubscribe = subscribeToWallet((state) => {
  *   console.log('Wallet state changed:', state);
  * });
- * 
+ *
  * // Later: unsubscribe()
  */
 export function subscribeToWallet(

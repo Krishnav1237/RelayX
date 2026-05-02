@@ -10,7 +10,7 @@
 - **Swap Quotes**: Uniswap Trading API when `UNISWAP_API_KEY` is set; CoinGecko spot prices otherwise
 - **AXL**: Multi-node HTTP adapter (3 nodes, parallel broadcast)
 - **Memory**: 0G Storage KV protocol stats + append-only execution log
-- **LLM**: Optional OpenAI integration (safe mode, never overrides)
+- **LLM**: Optional OpenRouter/Groq integration (safe mode, never overrides)
 
 ## Entry Point (`src/index.ts`)
 
@@ -35,12 +35,14 @@
 The core orchestration brain. Full pipeline:
 
 ### Phase 1: ENS Resolution
+
 1. Builds ENS source list: user ENS → wallet reverse lookup → fallback to vitalik.eth + defaults
 2. Resolves up to 3 sources in parallel
 3. Computes reputation score (boosted by github/twitter presence)
 4. If all ENS fails: neutral score (0.7), no penalties
 
 ### Phase 2: Agent Orchestration
+
 1. **YieldAgent.think()** — fetches live yield data, broadcasts to AXL, selects best option
 2. **RiskAgent.review()** — evaluates with ENS tiers, AXL consensus, and 0G memory
 3. **Retry** — if rejected or AXL penalty, retries with next-best protocol, preferring stronger memory stats when available
@@ -48,12 +50,14 @@ The core orchestration brain. Full pipeline:
 5. **ZeroGMemoryAdapter.storeExecution()** — appends execution history and updates protocol stats
 
 ### Phase 3: Validation
+
 - Trace assertions: all 4 agents must appear, timestamps increasing
 - Output contract: protocol non-empty, APY ends with %, status valid, explanation > 10 chars
 - Confidence clamped to [0, 0.95]
 - If validation fails: corrective trace entry added
 
 ### Phase 4: Response Assembly
+
 - Computes average confidence from all three agents (direct return values)
 - Builds `decisionImpact` with explicit ENS and AXL descriptions
 - Returns `ExecutionResponse` with trace, result, summary, debug
@@ -61,10 +65,12 @@ The core orchestration brain. Full pipeline:
 ## Agents
 
 ### BaseAgent (`src/agents/BaseAgent.ts`)
+
 - Properties: `id`, `name` (ENS-style: `yield.relay.eth`, etc.)
 - `log()` method produces `AgentTrace` entries with timestamp and metadata merging
 
 ### YieldAgent (`src/agents/YieldAgent.ts`)
+
 - Fetches live or cached upstream yield data from `YieldDataAdapter` (DefiLlama)
 - Validates: APY 0-50 and no empty protocols
 - Throws a controlled "yield unavailable" path when no live or cached options exist
@@ -74,6 +80,7 @@ The core orchestration brain. Full pipeline:
 - Returns confidence (boosted +0.03 for live data, +0.05 for retry)
 
 ### RiskAgent (`src/agents/RiskAgent.ts`)
+
 - ENS tiers: strong (≥0.9), neutral (0.7-0.9), weak (<0.7)
 - Strong ENS: +0.1 confidence, threshold 4.55
 - Weak ENS: -0.1 confidence, threshold 4.4, adds flag
@@ -86,6 +93,7 @@ The core orchestration brain. Full pipeline:
 - Returns `RiskReviewResult` + `confidence` + `ensInfluence` + `axlInfluence`
 
 ### ExecutorAgent (`src/agents/ExecutorAgent.ts`)
+
 - Prepares a deposit execution result (no signed on-chain transaction yet)
 - Fetches swap quote from Uniswap if configured, otherwise CoinGecko spot prices
 - Broadcasts `execution_signal` to AXL
@@ -95,6 +103,7 @@ The core orchestration brain. Full pipeline:
 ## Adapters
 
 ### YieldDataAdapter (`src/adapters/YieldDataAdapter.ts`)
+
 - **Source**: DefiLlama `https://yields.llama.fi/pools`
 - Filters: asset match, Ethereum chain, $1M+ TVL, APY 0-50%
 - Protocol risk mapping: Aave/Compound/Spark → low, Morpho/Yearn/Curve → medium
@@ -104,6 +113,7 @@ The core orchestration brain. Full pipeline:
 - Timeout: 8 seconds
 
 ### UniswapAdapter (`src/adapters/UniswapAdapter.ts`)
+
 - **Primary source**: Uniswap `https://api.uniswap.org/v1/quote` when `UNISWAP_API_KEY` is configured
 - **Secondary source**: CoinGecko `https://api.coingecko.com/api/v3/simple/price`
 - Converts token base units to human-readable quote amounts
@@ -111,6 +121,7 @@ The core orchestration brain. Full pipeline:
 - Unknown token pairs return `null`; no deterministic quote is fabricated
 
 ### ENSAdapter (`src/adapters/ENSAdapter.ts`)
+
 - Real Ethereum mainnet ENS resolution via viem
 - Resolves addresses + text records (description, url, twitter, github)
 - In-memory cache: 5-minute TTL
@@ -118,6 +129,7 @@ The core orchestration brain. Full pipeline:
 - Per-call timeout: 1s per RPC attempt
 
 ### AXLAdapter (`src/adapters/AXLAdapter.ts`)
+
 - Multi-node: broadcasts to 3 nodes in parallel (`Promise.allSettled`)
 - Nodes: `AXL_BASE_URL`, `:3006`, `:3007`
 - No simulated responses — returns empty array when no nodes respond
@@ -125,6 +137,7 @@ The core orchestration brain. Full pipeline:
 - Timeout: 1.5s per node
 
 ### ZeroGMemoryAdapter (`src/adapters/ZeroGMemoryAdapter.ts`)
+
 - Interfaces: `ExecutionMemory`, `ProtocolStats`
 - KV store: protocol success rate, average confidence, and execution count
 - Log store: append-only execution history
@@ -134,7 +147,9 @@ The core orchestration brain. Full pipeline:
 - Demo mode: injects Morpho low success and Aave/Aave V3 high success without writing to real 0G storage
 
 ### ReasoningAdapter (`src/adapters/ReasoningAdapter.ts`)
-- Optional OpenAI integration (requires `OPENAI_API_KEY`)
+
+- Optional LLM integration (supports OpenRouter or Groq with free tiers)
+- Priority: OpenRouter > Groq
 - `explainYield()`: generates human-readable yield explanation
 - `evaluateRisk()`: returns `{ reasoning, confidence }` for blending
 - Strict validation: confidence must be finite number, reasoning non-empty
@@ -145,20 +160,20 @@ The core orchestration brain. Full pipeline:
 
 All types strict, zero `any`:
 
-| Type | Key Fields |
-|---|---|
-| `AgentTrace` | agent, step, message, metadata?, timestamp |
-| `ExecutionResult` | protocol, apy, action, status, attempt?, swap? |
-| `ExecutionSummary` | selectedProtocol, initialProtocol, finalProtocol, wasRetried, confidence, explanation, decisionImpact |
-| `ExecutionRequest` | intent, context? (ens, wallet, demo, debug) |
-| `ExecutionResponse` | intent, trace, final_result, summary, debug? |
-| `ENSInfluence` | tier (strong/neutral/weak), reputationScore, effect |
-| `AXLInfluence` | approvalRatio, decisionImpact (boost/penalty/retry/none), isSimulated |
-| `DecisionImpact` | ens (string), axl (string) |
-| `YieldOption` | protocol, apy, riskLevel?, source?, tvlUsd?, poolId?, chain? |
-| `UniswapQuoteResult` | amountOut, priceImpact, gasEstimate, route, source, lastUpdatedAt? |
-| `ExecutionMemory` | intent, selectedProtocol, rejectedProtocol?, confidence, outcome, timestamp |
-| `ProtocolStats` | protocol, successRate, avgConfidence, executionCount |
+| Type                 | Key Fields                                                                                            |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| `AgentTrace`         | agent, step, message, metadata?, timestamp                                                            |
+| `ExecutionResult`    | protocol, apy, action, status, attempt?, swap?                                                        |
+| `ExecutionSummary`   | selectedProtocol, initialProtocol, finalProtocol, wasRetried, confidence, explanation, decisionImpact |
+| `ExecutionRequest`   | intent, context? (ens, wallet, demo, debug)                                                           |
+| `ExecutionResponse`  | intent, trace, final_result, summary, debug?                                                          |
+| `ENSInfluence`       | tier (strong/neutral/weak), reputationScore, effect                                                   |
+| `AXLInfluence`       | approvalRatio, decisionImpact (boost/penalty/retry/none), isSimulated                                 |
+| `DecisionImpact`     | ens (string), axl (string)                                                                            |
+| `YieldOption`        | protocol, apy, riskLevel?, source?, tvlUsd?, poolId?, chain?                                          |
+| `UniswapQuoteResult` | amountOut, priceImpact, gasEstimate, route, source, lastUpdatedAt?                                    |
+| `ExecutionMemory`    | intent, selectedProtocol, rejectedProtocol?, confidence, outcome, timestamp                           |
+| `ProtocolStats`      | protocol, successRate, avgConfidence, executionCount                                                  |
 
 ## Testing
 
@@ -168,31 +183,31 @@ All types strict, zero `any`:
 cd backend && npm test
 ```
 
-| Test File | Count | Coverage |
-|---|---|---|
-| BaseAgent.test.ts | 5 | Identity, logging, metadata merging |
-| YieldAgent.test.ts | 9 | Live data, selection, retry, asset extraction |
-| RiskAgent.test.ts | 12 | ENS tiers, AXL influence, approve/reject |
-| ExecutorAgent.test.ts | 9 | Quote data, result fields, confidence, narrative |
-| ExecutionService.test.ts | 11 | Full flow, retry, determinism, decisionImpact |
-| AXLAdapter.test.ts | 6 | Empty responses, graceful degradation |
-| YieldDataAdapter.test.ts | 4 | Live fetch, caching, no-data behavior |
-| EdgeCases.test.ts | 15 | Boundaries, ENS tiers, confidence bounds |
-| integration.test.ts | 1 | Full end-to-end flow |
-| hardening.test.ts | 15 | Stability, live retry path, low data, validation |
-| verification.test.ts | 7 | Verification scenarios, output contract |
-| UniswapAdapter.test.ts | 5 | Quote fetch, caching, unknown tokens |
-| ZeroGMemoryAdapter.test.ts | 5 | Memory storage, stats, risk influence, fail-safe, demo |
-| audit.test.ts | 25 | Pipeline, edge cases, determinism, security |
+| Test File                  | Count | Coverage                                               |
+| -------------------------- | ----- | ------------------------------------------------------ |
+| BaseAgent.test.ts          | 5     | Identity, logging, metadata merging                    |
+| YieldAgent.test.ts         | 9     | Live data, selection, retry, asset extraction          |
+| RiskAgent.test.ts          | 12    | ENS tiers, AXL influence, approve/reject               |
+| ExecutorAgent.test.ts      | 9     | Quote data, result fields, confidence, narrative       |
+| ExecutionService.test.ts   | 11    | Full flow, retry, determinism, decisionImpact          |
+| AXLAdapter.test.ts         | 6     | Empty responses, graceful degradation                  |
+| YieldDataAdapter.test.ts   | 4     | Live fetch, caching, no-data behavior                  |
+| EdgeCases.test.ts          | 15    | Boundaries, ENS tiers, confidence bounds               |
+| integration.test.ts        | 1     | Full end-to-end flow                                   |
+| hardening.test.ts          | 15    | Stability, live retry path, low data, validation       |
+| verification.test.ts       | 7     | Verification scenarios, output contract                |
+| UniswapAdapter.test.ts     | 5     | Quote fetch, caching, unknown tokens                   |
+| ZeroGMemoryAdapter.test.ts | 5     | Memory storage, stats, risk influence, fail-safe, demo |
+| audit.test.ts              | 25    | Pipeline, edge cases, determinism, security            |
 
 ## Graceful Degradation
 
-| Failure | Behavior |
-|---|---|
-| DefiLlama down | Returns cached upstream data if present; otherwise structured failed execution |
-| All AXL nodes down | Empty responses, no confidence change, clean trace |
-| ENS RPC down | Neutral reputation (0.7), no penalties |
-| Uniswap unavailable | Uses CoinGecko spot price quote; if both fail, execution continues without swap quote |
+| Failure               | Behavior                                                                                |
+| --------------------- | --------------------------------------------------------------------------------------- |
+| DefiLlama down        | Returns cached upstream data if present; otherwise structured failed execution          |
+| All AXL nodes down    | Empty responses, no confidence change, clean trace                                      |
+| ENS RPC down          | Neutral reputation (0.7), no penalties                                                  |
+| Uniswap unavailable   | Uses CoinGecko spot price quote; if both fail, execution continues without swap quote   |
 | 0G memory unavailable | Returns null stats, emits memory fallback trace, does not alter risk or retry decisions |
-| LLM timeout/error | Ignored completely, deterministic logic only |
-| Malformed AXL data | Rejected by type guards, never trusted |
+| LLM timeout/error     | Ignored completely, deterministic logic only                                            |
+| Malformed AXL data    | Rejected by type guards, never trusted                                                  |

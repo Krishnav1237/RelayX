@@ -173,7 +173,7 @@ export class UniswapAdapter {
       const outputPrice = this.getUsdPrice(body, tokenOut.coingeckoId);
       if (inputPrice === null || outputPrice === null || outputPrice <= 0) return null;
 
-      const amountOut = amountIn * inputPrice / outputPrice;
+      const amountOut = (amountIn * inputPrice) / outputPrice;
       const lastUpdatedAt = Math.min(
         this.getLastUpdatedAt(body, tokenIn.coingeckoId) ?? Number.MAX_SAFE_INTEGER,
         this.getLastUpdatedAt(body, tokenOut.coingeckoId) ?? Number.MAX_SAFE_INTEGER
@@ -203,24 +203,29 @@ export class UniswapAdapter {
     if (!isRecord(data)) return null;
 
     const quote = isRecord(data.quote) ? data.quote : data;
-    const decimalAmount = this.readString(quote, ['quoteDecimals'])
-      ?? this.readString(quote, ['amountOutReadable'])
-      ?? this.readString(quote, ['output', 'amountReadable']);
-    const rawAmount = this.readString(quote, ['amountOut'])
-      ?? this.readString(quote, ['amount'])
-      ?? this.readString(quote, ['output', 'amount']);
-    const amountOut = decimalAmount ?? (rawAmount ? this.formatBaseUnits(rawAmount, tokenOut.decimals) : null);
+    const decimalAmount =
+      this.readString(quote, ['quoteDecimals']) ??
+      this.readString(quote, ['amountOutReadable']) ??
+      this.readString(quote, ['output', 'amountReadable']);
+    const rawAmount =
+      this.readString(quote, ['amountOut']) ??
+      this.readString(quote, ['amount']) ??
+      this.readString(quote, ['output', 'amount']);
+    const amountOut =
+      decimalAmount ?? (rawAmount ? this.formatBaseUnits(rawAmount, tokenOut.decimals) : null);
 
     if (!amountOut) return null;
 
-    const priceImpact = this.readNumber(quote, ['priceImpact'])
-      ?? this.readNumber(quote, ['priceImpactPercent'])
-      ?? 0;
+    const priceImpact =
+      this.readNumber(quote, ['priceImpact']) ??
+      this.readNumber(quote, ['priceImpactPercent']) ??
+      0;
 
-    const gasEstimate = this.readString(quote, ['gasUseEstimate'])
-      ?? this.readString(quote, ['gasUseEstimateUSD'])
-      ?? this.readString(quote, ['gasFee'])
-      ?? '0';
+    const gasEstimate =
+      this.readString(quote, ['gasUseEstimate']) ??
+      this.readString(quote, ['gasUseEstimateUSD']) ??
+      this.readString(quote, ['gasFee']) ??
+      '0';
 
     if (!Number.isFinite(priceImpact)) return null;
 
@@ -238,13 +243,17 @@ export class UniswapAdapter {
     if (!isRecord(data)) return `Uniswap ${params.tokenIn} -> ${params.tokenOut}`;
 
     if (Array.isArray(data.route)) {
-      const legs = data.route
-        .filter(isRecord)
-        .map(leg => {
-          const tokenIn = isRecord(leg.tokenIn) && typeof leg.tokenIn.symbol === 'string' ? leg.tokenIn.symbol : '?';
-          const tokenOut = isRecord(leg.tokenOut) && typeof leg.tokenOut.symbol === 'string' ? leg.tokenOut.symbol : '?';
-          return `${tokenIn} -> ${tokenOut}`;
-        });
+      const legs = data.route.filter(isRecord).map((leg) => {
+        const tokenIn =
+          isRecord(leg.tokenIn) && typeof leg.tokenIn.symbol === 'string'
+            ? leg.tokenIn.symbol
+            : '?';
+        const tokenOut =
+          isRecord(leg.tokenOut) && typeof leg.tokenOut.symbol === 'string'
+            ? leg.tokenOut.symbol
+            : '?';
+        return `${tokenIn} -> ${tokenOut}`;
+      });
       if (legs.length > 0) return `${legs.join(' -> ')} via Uniswap`;
     }
 
@@ -292,7 +301,7 @@ export class UniswapAdapter {
   private baseUnitsToNumber(amount: string, decimals: number): number | null {
     try {
       const raw = BigInt(amount);
-      return Number(raw) / (10 ** decimals);
+      return Number(raw) / 10 ** decimals;
     } catch {
       const parsed = Number(amount);
       return Number.isFinite(parsed) ? parsed : null;

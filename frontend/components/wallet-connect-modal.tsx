@@ -1,11 +1,11 @@
-"use client";
+'use client';
 
-import { useState, useEffect } from "react";
-import { createPortal } from "react-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import { X, Loader2, AlertCircle } from "lucide-react";
-import { useWalletStore } from "@/lib/wallet/store";
-import type { WalletType } from "@/lib/wallet/types";
+import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import { X, Loader2, AlertCircle } from 'lucide-react';
+import { useWalletStore } from '@/lib/wallet/store';
+import type { WalletType } from '@/lib/wallet/types';
 
 interface WalletConnectModalProps {
   isOpen: boolean;
@@ -22,24 +22,24 @@ interface WalletOption {
 
 const walletOptions: WalletOption[] = [
   {
-    type: "metamask",
-    name: "MetaMask",
-    icon: "🦊",
-    description: "Connect with MetaMask wallet",
-    installUrl: "https://metamask.io/download/",
+    type: 'metamask',
+    name: 'MetaMask',
+    icon: '🦊',
+    description: 'Connect with MetaMask wallet',
+    installUrl: 'https://metamask.io/download/',
   },
   {
-    type: "phantom",
-    name: "Phantom",
-    icon: "👻",
-    description: "Connect with Phantom wallet",
-    installUrl: "https://phantom.app/download",
+    type: 'phantom',
+    name: 'Phantom',
+    icon: '👻',
+    description: 'Connect with Phantom wallet',
+    installUrl: 'https://phantom.app/download',
   },
   {
-    type: "walletconnect",
-    name: "WalletConnect",
-    icon: "🔗",
-    description: "Connect with any Web3 wallet",
+    type: 'walletconnect',
+    name: 'WalletConnect',
+    icon: '🔗',
+    description: 'Connect with any Web3 wallet',
   },
 ];
 
@@ -61,7 +61,7 @@ export function WalletConnectModal({ isOpen, onClose }: WalletConnectModalProps)
       await connect(walletType);
       onClose();
     } catch (error) {
-      console.error("Failed to connect wallet:", error);
+      console.error('Failed to connect wallet:', error);
       // Error is already set in the store
     } finally {
       setConnectingWallet(null);
@@ -78,20 +78,20 @@ export function WalletConnectModal({ isOpen, onClose }: WalletConnectModalProps)
   // Handle ESC key press
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && isOpen && !isConnecting) {
+      if (event.key === 'Escape' && isOpen && !isConnecting) {
         handleClose();
       }
     };
 
     if (isOpen) {
-      document.addEventListener("keydown", handleEscape);
+      document.addEventListener('keydown', handleEscape);
       // Prevent body scroll when modal is open
-      document.body.style.overflow = "hidden";
+      document.body.style.overflow = 'hidden';
     }
 
     return () => {
-      document.removeEventListener("keydown", handleEscape);
-      document.body.style.overflow = "unset";
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'unset';
     };
   }, [isOpen, isConnecting]);
 
@@ -116,7 +116,7 @@ export function WalletConnectModal({ isOpen, onClose }: WalletConnectModalProps)
           />
 
           {/* Modal Container - centered with proper constraints */}
-          <div 
+          <div
             className="fixed inset-0 z-[10000] flex items-center justify-center p-4 overflow-y-auto"
             onClick={handleClose}
           >
@@ -151,7 +151,7 @@ export function WalletConnectModal({ isOpen, onClose }: WalletConnectModalProps)
                 {error && (
                   <motion.div
                     initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-                    animate={{ opacity: 1, height: "auto", marginBottom: 16 }}
+                    animate={{ opacity: 1, height: 'auto', marginBottom: 16 }}
                     exit={{ opacity: 0, height: 0, marginBottom: 0 }}
                     transition={{ duration: 0.2 }}
                     className="overflow-hidden"

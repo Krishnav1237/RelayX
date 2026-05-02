@@ -1,24 +1,24 @@
 import { YieldOption } from '../types';
 
 const DEFILLAMA_URL = 'https://yields.llama.fi/pools';
-const FETCH_TIMEOUT_MS = 8000;
+const FETCH_TIMEOUT_MS = 15000;
 const FRESH_CACHE_TTL_MS = 60_000;
 const STALE_CACHE_TTL_MS = 10 * 60_000;
 
 const PROTOCOL_RISK_MAP: Record<string, YieldOption['riskLevel']> = {
-  'aave': 'low',
+  aave: 'low',
   'aave-v3': 'low',
   'aave-v2': 'low',
-  'compound': 'low',
+  compound: 'low',
   'compound-v3': 'low',
   'compound-v2': 'low',
-  'morpho': 'medium',
+  morpho: 'medium',
   'morpho-blue': 'medium',
-  'spark': 'low',
-  'yearn': 'medium',
-  'lido': 'low',
+  spark: 'low',
+  yearn: 'medium',
+  lido: 'low',
   'rocket-pool': 'low',
-  'maker': 'low',
+  maker: 'low',
   'convex-finance': 'medium',
   'curve-dex': 'medium',
 };
@@ -61,7 +61,10 @@ export class YieldDataAdapter {
         return options;
       }
     } catch (error) {
-      console.error('[YieldDataAdapter] DefiLlama fetch failed:', error instanceof Error ? error.message : error);
+      console.error(
+        '[YieldDataAdapter] DefiLlama fetch failed:',
+        error instanceof Error ? error.message : error
+      );
     }
 
     if (cached && Date.now() - cached.timestamp < STALE_CACHE_TTL_MS) {
@@ -125,9 +128,7 @@ export class YieldDataAdapter {
       }
     }
 
-    return [...seen.values()]
-      .sort((a, b) => b.apy - a.apy)
-      .slice(0, 5);
+    return [...seen.values()].sort((a, b) => b.apy - a.apy).slice(0, 5);
   }
 
   private symbolMatchesAsset(symbol: string, asset: string): boolean {
@@ -136,19 +137,19 @@ export class YieldDataAdapter {
     const symbolParts = symbol
       .toUpperCase()
       .split(/[^A-Z0-9]+/)
-      .filter(part => part.length > 0);
+      .filter((part) => part.length > 0);
 
-    return acceptedSymbols.some(accepted => symbolParts.includes(accepted));
+    return acceptedSymbols.some((accepted) => symbolParts.includes(accepted));
   }
 
   private withSource(options: YieldOption[], source: 'cache'): YieldOption[] {
-    return options.map(option => ({ ...option, source }));
+    return options.map((option) => ({ ...option, source }));
   }
 
   private formatProtocolName(raw: string): string {
     return raw
       .split('-')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ');
   }
 }

@@ -1,12 +1,12 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { motion } from "framer-motion";
-import { Activity, Clock, Database, Filter, Terminal } from "lucide-react";
-import { AppBackground } from "@/components/app-background";
-import { ExecutionFloatingPanel } from "@/components/execution-floating-panel";
-import { Navbar } from "@/components/navbar";
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { motion } from 'framer-motion';
+import { Activity, Clock, Database, Filter, Terminal } from 'lucide-react';
+import { AppBackground } from '@/components/app-background';
+import { ExecutionFloatingPanel } from '@/components/execution-floating-panel';
+import { Navbar } from '@/components/navbar';
 import {
   formatApy,
   loadExecutionLog,
@@ -19,23 +19,23 @@ import {
   type ExecutionResponse,
   type StoredExecutionLog,
   type StoredExecutionSession,
-} from "@/lib/execution";
-import { cn } from "@/lib/utils";
+} from '@/lib/execution';
+import { cn } from '@/lib/utils';
 
-type AgentFilter = "all" | CanonicalAgentName;
+type AgentFilter = 'all' | CanonicalAgentName;
 
 const AGENT_FILTERS: Array<{ label: string; value: AgentFilter }> = [
-  { label: "All agents", value: "all" },
-  { label: "system.relay.eth", value: "system.relay.eth" },
-  { label: "yield.relay.eth", value: "yield.relay.eth" },
-  { label: "risk.relay.eth", value: "risk.relay.eth" },
-  { label: "executor.relay.eth", value: "executor.relay.eth" },
+  { label: 'All agents', value: 'all' },
+  { label: 'system.relay.eth', value: 'system.relay.eth' },
+  { label: 'yield.relay.eth', value: 'yield.relay.eth' },
+  { label: 'risk.relay.eth', value: 'risk.relay.eth' },
+  { label: 'executor.relay.eth', value: 'executor.relay.eth' },
 ];
 
 export default function LogsPage() {
   const [storedLog, setStoredLog] = useState<StoredExecutionLog | null>(null);
   const [storedSession, setStoredSession] = useState<StoredExecutionSession | null>(null);
-  const [activeFilter, setActiveFilter] = useState<AgentFilter>("all");
+  const [activeFilter, setActiveFilter] = useState<AgentFilter>('all');
   const [isApproving, setIsApproving] = useState(false);
 
   useEffect(() => {
@@ -46,11 +46,11 @@ export default function LogsPage() {
     };
     const timeout = window.setTimeout(refreshLog, 0);
 
-    window.addEventListener("storage", refreshLog);
+    window.addEventListener('storage', refreshLog);
 
     return () => {
       window.clearTimeout(timeout);
-      window.removeEventListener("storage", refreshLog);
+      window.removeEventListener('storage', refreshLog);
     };
   }, []);
 
@@ -60,15 +60,12 @@ export default function LogsPage() {
   }, [storedLog]);
 
   const filteredTraces = useMemo(() => {
-    if (activeFilter === "all") return traces;
+    if (activeFilter === 'all') return traces;
     return traces.filter((trace) => normalizeAgentName(trace.agent) === activeFilter);
   }, [activeFilter, traces]);
 
   const response = storedLog?.response ?? null;
-  const showFloatingPanel = Boolean(
-    storedSession?.response
-    && !storedSession.resultPanelDismissed
-  );
+  const showFloatingPanel = Boolean(storedSession?.response && !storedSession.resultPanelDismissed);
 
   const toggleFloatingPanel = () => {
     if (!storedSession) return;
@@ -98,9 +95,9 @@ export default function LogsPage() {
     setIsApproving(true);
 
     try {
-      const res = await fetch("/api/execute/confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch('/api/execute/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approvalId: storedSession.response.approval.id }),
       });
 
@@ -170,7 +167,10 @@ export default function LogsPage() {
         </header>
 
         {response && (
-          <LogResultSummary response={response} approvalCancelled={storedSession?.approvalCancelled === true} />
+          <LogResultSummary
+            response={response}
+            approvalCancelled={storedSession?.approvalCancelled === true}
+          />
         )}
 
         <section className="relay-panel overflow-hidden">
@@ -187,10 +187,10 @@ export default function LogsPage() {
                     type="button"
                     onClick={() => setActiveFilter(filter.value)}
                     className={cn(
-                      "rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-200 hover:-translate-y-0.5",
+                      'rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-200 hover:-translate-y-0.5',
                       activeFilter === filter.value
-                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                        : "border-border bg-background/40 text-zinc-500 hover:bg-accent hover:text-foreground"
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        : 'border-border bg-background/40 text-zinc-500 hover:bg-accent hover:text-foreground'
                     )}
                   >
                     {filter.label}
@@ -220,7 +220,11 @@ export default function LogsPage() {
                 {filteredTraces.length > 0 ? (
                   <div className="space-y-3">
                     {filteredTraces.map((trace, index) => (
-                      <LogEntry trace={trace} index={index} key={`${trace.timestamp}-${trace.agent}-${trace.step}-${index}`} />
+                      <LogEntry
+                        trace={trace}
+                        index={index}
+                        key={`${trace.timestamp}-${trace.agent}-${trace.step}-${index}`}
+                      />
                     ))}
                   </div>
                 ) : (
@@ -250,8 +254,8 @@ export default function LogsPage() {
 
 async function getExecutionErrorMessage(response: Response): Promise<string> {
   try {
-    const payload = await response.json() as unknown;
-    if (isRecord(payload) && typeof payload.error === "string") {
+    const payload = (await response.json()) as unknown;
+    if (isRecord(payload) && typeof payload.error === 'string') {
       return payload.error;
     }
   } catch {
@@ -262,7 +266,7 @@ async function getExecutionErrorMessage(response: Response): Promise<string> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === 'object' && value !== null;
 }
 
 function loadCurrentExecutionLog(session = loadExecutionSession()): StoredExecutionLog | null {
@@ -283,30 +287,44 @@ function LogResultSummary({
   approvalCancelled: boolean;
   response: ExecutionResponse;
 }) {
-  const status = response.final_result.status === "pending_approval"
-    ? approvalCancelled ? "cancelled" : "awaiting approval"
-    : response.final_result.status;
+  const status =
+    response.final_result.status === 'pending_approval'
+      ? approvalCancelled
+        ? 'cancelled'
+        : 'awaiting approval'
+      : response.final_result.status;
 
   return (
     <section className="grid gap-3 sm:grid-cols-3">
-      <ResultTile label="Status" value={status} tone={status === "success" ? "emerald" : "cyan"} />
-      <ResultTile label="Protocol" value={response.summary.finalProtocol || response.final_result.protocol || "n/a"} />
+      <ResultTile label="Status" value={status} tone={status === 'success' ? 'emerald' : 'cyan'} />
+      <ResultTile
+        label="Protocol"
+        value={response.summary.finalProtocol || response.final_result.protocol || 'n/a'}
+      />
       <ResultTile label="APY" value={formatApy(response.final_result.apy)} tone="emerald" />
     </section>
   );
 }
 
-function ResultTile({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "emerald" | "cyan" }) {
+function ResultTile({
+  label,
+  value,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string;
+  tone?: 'neutral' | 'emerald' | 'cyan';
+}) {
   const toneClass = {
-    neutral: "text-foreground",
-    emerald: "text-emerald-500",
-    cyan: "text-cyan-500",
+    neutral: 'text-foreground',
+    emerald: 'text-emerald-500',
+    cyan: 'text-cyan-500',
   }[tone];
 
   return (
     <div className="relay-card p-3">
       <div className="text-xs text-zinc-500">{label}</div>
-      <div className={cn("mt-1 truncate font-mono text-sm font-semibold", toneClass)}>{value}</div>
+      <div className={cn('mt-1 truncate font-mono text-sm font-semibold', toneClass)}>{value}</div>
     </div>
   );
 }
@@ -326,7 +344,7 @@ function LogSnapshotMeta({
           Captured
         </div>
         <div className="font-mono text-foreground">
-          {storedLog ? new Date(storedLog.savedAt).toLocaleTimeString() : "n/a"}
+          {storedLog ? new Date(storedLog.savedAt).toLocaleTimeString() : 'n/a'}
         </div>
       </div>
       <div className="relay-card p-3">
@@ -348,25 +366,30 @@ function LogEntry({ trace, index }: { trace: AgentTrace; index: number }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, delay: Math.min(index * 0.015, 0.2) }}
-      className={cn("relay-card p-3", agentBorderClass(agent))}
+      className={cn('relay-card p-3', agentBorderClass(agent))}
     >
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-zinc-400">
-            [{new Date(trace.timestamp).toISOString().split("T")[1].slice(0, -1)}]
+            [{new Date(trace.timestamp).toISOString().split('T')[1].slice(0, -1)}]
           </span>
-          <span className={cn("rounded border px-2 py-0.5 text-xs font-semibold", agentBadgeClass(agent))}>
+          <span
+            className={cn(
+              'rounded border px-2 py-0.5 text-xs font-semibold',
+              agentBadgeClass(agent)
+            )}
+          >
             {agent}
           </span>
           <span className="rounded border border-border bg-accent/40 px-2 py-0.5 text-xs text-zinc-600 dark:text-zinc-400">
-            {trace.step || "unknown"}
+            {trace.step || 'unknown'}
           </span>
         </div>
         <span className="text-xs text-zinc-500">#{index + 1}</span>
       </div>
 
       <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
-        {trace.message || "No message provided."}
+        {trace.message || 'No message provided.'}
       </p>
 
       <details className="mt-3 rounded-md border border-border bg-black/[0.03] dark:bg-white/[0.03]">
@@ -386,18 +409,15 @@ function EmptyLogs({ hasAnyLogs }: { hasAnyLogs: boolean }) {
     <div className="flex h-full flex-col items-center justify-center px-6 text-center text-zinc-500">
       <Activity className="mb-4 h-10 w-10 text-zinc-400" />
       <h2 className="text-base font-semibold text-foreground">
-        {hasAnyLogs ? "No logs match this filter" : "No execution logs yet"}
+        {hasAnyLogs ? 'No logs match this filter' : 'No execution logs yet'}
       </h2>
       <p className="mt-2 max-w-md text-sm">
         {hasAnyLogs
-          ? "Choose a different agent filter to inspect the captured trace."
-          : "Run an execution from the dashboard, then return here to inspect the full backend trace."}
+          ? 'Choose a different agent filter to inspect the captured trace.'
+          : 'Run an execution from the dashboard, then return here to inspect the full backend trace.'}
       </p>
       {!hasAnyLogs && (
-        <Link
-          href="/dashboard"
-          className="relay-button-primary mt-5"
-        >
+        <Link href="/dashboard" className="relay-button-primary mt-5">
           Open Dashboard
         </Link>
       )}
@@ -406,7 +426,7 @@ function EmptyLogs({ hasAnyLogs }: { hasAnyLogs: boolean }) {
 }
 
 function formatMetadata(metadata?: Record<string, unknown>): string {
-  if (!metadata || Object.keys(metadata).length === 0) return "{}";
+  if (!metadata || Object.keys(metadata).length === 0) return '{}';
 
   try {
     return JSON.stringify(metadata, null, 2);
@@ -416,17 +436,21 @@ function formatMetadata(metadata?: Record<string, unknown>): string {
 }
 
 function agentBadgeClass(agent: string) {
-  if (agent === "system.relay.eth") return "border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300";
-  if (agent === "yield.relay.eth") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-  if (agent === "risk.relay.eth") return "border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300";
-  if (agent === "executor.relay.eth") return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300";
-  return "border-zinc-500/30 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300";
+  if (agent === 'system.relay.eth')
+    return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300';
+  if (agent === 'yield.relay.eth')
+    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+  if (agent === 'risk.relay.eth')
+    return 'border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300';
+  if (agent === 'executor.relay.eth')
+    return 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300';
+  return 'border-zinc-500/30 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300';
 }
 
 function agentBorderClass(agent: string) {
-  if (agent === "system.relay.eth") return "border-cyan-500/20";
-  if (agent === "yield.relay.eth") return "border-emerald-500/20";
-  if (agent === "risk.relay.eth") return "border-teal-500/20";
-  if (agent === "executor.relay.eth") return "border-sky-500/20";
-  return "border-border";
+  if (agent === 'system.relay.eth') return 'border-cyan-500/20';
+  if (agent === 'yield.relay.eth') return 'border-emerald-500/20';
+  if (agent === 'risk.relay.eth') return 'border-teal-500/20';
+  if (agent === 'executor.relay.eth') return 'border-sky-500/20';
+  return 'border-border';
 }

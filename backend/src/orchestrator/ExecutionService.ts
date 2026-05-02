@@ -1,10 +1,25 @@
 import { randomUUID } from 'crypto';
-import { AgentTrace, AXLInfluence, DecisionImpact, ENSInfluence, ENSReputationContext, ExecutionApproval, ExecutionRequest, ExecutionResponse, ExecutionResult, ExecutionSummary, UniswapQuoteResult, YieldOption, YieldThinkResult } from '../types';
+import {
+  AgentTrace,
+  AXLInfluence,
+  DecisionImpact,
+  ENSInfluence,
+  ENSReputationContext,
+  ExecutionApproval,
+  ExecutionRequest,
+  ExecutionResponse,
+  ExecutionResult,
+  ExecutionSummary,
+  UniswapQuoteResult,
+  YieldOption,
+  YieldThinkResult,
+} from '../types';
 import { YieldAgent } from '../agents/YieldAgent';
 import { RiskAgent } from '../agents/RiskAgent';
 import { ExecutorAgent } from '../agents/ExecutorAgent';
 import { ENSAdapter } from '../adapters/ENSAdapter';
 import { ZeroGMemoryAdapter } from '../adapters/ZeroGMemoryAdapter';
+import { ReasoningAdapter } from '../adapters/ReasoningAdapter';
 import { createPublicClient, http, type Address } from 'viem';
 import { mainnet } from 'viem/chains';
 
@@ -35,6 +50,7 @@ interface PendingExecution {
   ensReputationScore: number;
   ensInfluence?: ENSInfluence;
   axlInfluence?: AXLInfluence;
+  memoryInfluence?: import('../types').MemoryInfluence;
   decisionImpact: DecisionImpact;
   clampedYield: number;
   clampedRisk: number;
@@ -64,6 +80,7 @@ export class ExecutionService {
   private executorAgent: ExecutorAgent;
   private ensAdapter: ENSAdapter;
   private memoryAdapter: ZeroGMemoryAdapter;
+  private reasoningAdapter: ReasoningAdapter;
   private pendingExecutions = new Map<string, PendingExecution>();
   private reverseLookupClient = createPublicClient({
     chain: mainnet,
@@ -76,6 +93,7 @@ export class ExecutionService {
     this.riskAgent = new RiskAgent(memoryAdapter);
     this.executorAgent = new ExecutorAgent();
     this.ensAdapter = new ENSAdapter();
+    this.reasoningAdapter = new ReasoningAdapter();
   }
 
   // --- ENS helpers ---
@@ -86,19 +104,41 @@ export class ExecutionService {
         let address: string | null = null;
         let records: Record<string, string> = {};
         try {
-          address = await withTimeout(this.ensAdapter.resolveName(sourceName), ENS_TIMEOUT_MS, `resolveName ${sourceName}`);
-        } catch (e) { console.error(`[ENS ERROR] ${sourceName} ${e instanceof Error ? e.message : e}`); }
+          address = await withTimeout(
+            this.ensAdapter.resolveName(sourceName),
+            ENS_TIMEOUT_MS,
+            `resolveName ${sourceName}`
+          );
+        } catch (e) {
+          console.error(`[ENS ERROR] ${sourceName} ${e instanceof Error ? e.message : e}`);
+        }
         try {
-          records = await withTimeout(this.ensAdapter.getTextRecords(sourceName), ENS_TIMEOUT_MS, `getTextRecords ${sourceName}`);
-        } catch (e) { console.error(`[ENS ERROR] ${sourceName} ${e instanceof Error ? e.message : e}`); records = {}; }
+          records = await withTimeout(
+            this.ensAdapter.getTextRecords(sourceName),
+            ENS_TIMEOUT_MS,
+            `getTextRecords ${sourceName}`
+          );
+        } catch (e) {
+          console.error(`[ENS ERROR] ${sourceName} ${e instanceof Error ? e.message : e}`);
+          records = {};
+        }
         if (address === null && Object.keys(records).length === 0) return undefined;
-        return { name: sourceName, address, records, score: this.computeSourceScore(sourceName, address, records) } satisfies ENSSourceSignal;
+        return {
+          name: sourceName,
+          address,
+          records,
+          score: this.computeSourceScore(sourceName, address, records),
+        } satisfies ENSSourceSignal;
       })
     );
     return results.filter((r): r is ENSSourceSignal => r !== undefined);
   }
 
-  private computeSourceScore(sourceName: string, address: string | null, records: Record<string, string>): number {
+  private computeSourceScore(
+    sourceName: string,
+    address: string | null,
+    records: Record<string, string>
+  ): number {
     const trusted = TRUSTED_ENS_SCORES[sourceName.toLowerCase()];
     if (trusted !== undefined) return normalizeConfidence(trusted);
     let score = 0.5;
@@ -109,12 +149,15 @@ export class ExecutionService {
     return normalizeConfidence(score);
   }
 
-  private buildENSContext(signals: ENSSourceSignal[], names: readonly string[]): ENSReputationContext {
+  private buildENSContext(
+    signals: ENSSourceSignal[],
+    names: readonly string[]
+  ): ENSReputationContext {
     if (signals.length === 0) return { sources: [...names], resolved: [], reputationScore: 0.5 };
     const total = signals.reduce((s, x) => s + x.score, 0);
     return {
-      sources: signals.map(s => s.name),
-      resolved: signals.filter(s => s.address !== null).map(s => s.name),
+      sources: signals.map((s) => s.name),
+      resolved: signals.filter((s) => s.address !== null).map((s) => s.name),
       reputationScore: normalizeConfidence(total / signals.length),
     };
   }
@@ -123,7 +166,9 @@ export class ExecutionService {
     return typeof value === 'string' && value.trim().toLowerCase().includes('.eth');
   }
 
-  private normalizeEnsName(name: string): string { return name.trim().toLowerCase(); }
+  private normalizeEnsName(name: string): string {
+    return name.trim().toLowerCase();
+  }
 
   private isWalletAddress(value: unknown): value is string {
     return typeof value === 'string' && /^0x[a-fA-F0-9]{40}$/.test(value.trim());
@@ -135,28 +180,41 @@ export class ExecutionService {
     for (const s of sources) {
       if (!this.isEnsName(s)) continue;
       const n = this.normalizeEnsName(s);
-      if (!seen.has(n)) { seen.add(n); out.push(n); }
+      if (!seen.has(n)) {
+        seen.add(n);
+        out.push(n);
+      }
     }
     return out;
   }
 
   private async reverseLookupWalletENS(wallet: string): Promise<string | null> {
     try {
-      const name = await withTimeout(this.reverseLookupClient.getEnsName({ address: wallet as Address }), ENS_TIMEOUT_MS, `reverseLookup ${wallet}`);
+      const name = await withTimeout(
+        this.reverseLookupClient.getEnsName({ address: wallet as Address }),
+        ENS_TIMEOUT_MS,
+        `reverseLookup ${wallet}`
+      );
       if (this.isEnsName(name)) return this.normalizeEnsName(name);
-    } catch (e) { console.error(`[ENS ERROR] reverse lookup ${wallet}: ${e instanceof Error ? e.message : e}`); }
+    } catch (e) {
+      console.error(`[ENS ERROR] reverse lookup ${wallet}: ${e instanceof Error ? e.message : e}`);
+    }
     return null;
   }
 
   // --- Main execution ---
 
   async analyze(request: ExecutionRequest): Promise<ExecutionResponse> {
-    const memoryAdapter = request.context?.demo === true ? ZeroGMemoryAdapter.demo() : this.memoryAdapter;
-    const riskAgent = request.context?.demo === true ? new RiskAgent(memoryAdapter) : this.riskAgent;
+    const memoryAdapter =
+      request.context?.demo === true ? ZeroGMemoryAdapter.demo() : this.memoryAdapter;
+    const riskAgent =
+      request.context?.demo === true ? new RiskAgent(memoryAdapter) : this.riskAgent;
     const traceMetadata = request.context?.demo === true ? { demo: true } : undefined;
 
     const defaultSources = [...DEFAULT_ENS_SOURCES];
-    const userENS = this.isEnsName(request.context?.ens) ? this.normalizeEnsName(request.context.ens) : null;
+    const userENS = this.isEnsName(request.context?.ens)
+      ? this.normalizeEnsName(request.context.ens)
+      : null;
     let walletENS: string | null = null;
     if (this.isWalletAddress(request.context?.wallet)) {
       walletENS = await this.reverseLookupWalletENS(request.context.wallet);
@@ -167,7 +225,10 @@ export class ExecutionService {
     if (walletENS) dynamicSources.push(walletENS);
     if (!userENS && !walletENS) dynamicSources.push('vitalik.eth');
 
-    const finalENSSources = this.uniqEnsSources([...dynamicSources, ...defaultSources]).slice(0, MAX_ENS_SOURCES);
+    const finalENSSources = this.uniqEnsSources([...dynamicSources, ...defaultSources]).slice(
+      0,
+      MAX_ENS_SOURCES
+    );
 
     const trace: AgentTrace[] = [];
     const maxAttempts = 2;
@@ -183,10 +244,13 @@ export class ExecutionService {
     }
 
     // System: start
-    trace.push({ agent: SYSTEM_AGENT, step: 'start',
+    trace.push({
+      agent: SYSTEM_AGENT,
+      step: 'start',
       message: `Processing intent: "${request.intent}" — ENS reputation: ${ensContext.reputationScore.toFixed(2)}`,
       metadata: { ensSourcesUsed: finalENSSources, reputationScore: ensContext.reputationScore },
-      timestamp: ts });
+      timestamp: ts,
+    });
     ts += 10;
 
     // Step 1: YieldAgent
@@ -207,6 +271,7 @@ export class ExecutionService {
     let riskConfidence = 0.8;
     let lastEnsInfluence: ENSInfluence | undefined;
     let lastAxlInfluence: AXLInfluence | undefined;
+    let lastMemoryInfluence: import('../types').MemoryInfluence | undefined;
 
     // Step 2: RiskAgent
     let riskOutput = await riskAgent.review(selectedOption, trace, ts, traceMetadata, ensContext);
@@ -215,18 +280,39 @@ export class ExecutionService {
     riskConfidence = riskOutput.confidence;
     lastEnsInfluence = riskOutput.ensInfluence;
     lastAxlInfluence = riskOutput.axlInfluence;
+    lastMemoryInfluence = riskOutput.memoryInfluence;
+    if (lastMemoryInfluence) {
+      trace.push({
+        agent: 'risk.relay.eth',
+        step: 'memory',
+        message: lastMemoryInfluence.hasHistory
+          ? `Memory: ${lastMemoryInfluence.protocol} → ${lastMemoryInfluence.impact === 'boosted' ? 'strong' : lastMemoryInfluence.impact === 'penalized' ? 'weak' : 'neutral'} history (${lastMemoryInfluence.impact})`
+          : `Memory: ${lastMemoryInfluence.protocol} → no history (neutral)`,
+        metadata: {
+          protocol: lastMemoryInfluence.protocol,
+          hasHistory: lastMemoryInfluence.hasHistory,
+          impact: lastMemoryInfluence.impact,
+        },
+        timestamp: ts,
+      });
+      ts += 10;
+    }
 
     // Step 3: Retry if rejected OR if AXL forced retry
-    const shouldRetry = (riskResult.decision === 'reject' || riskOutput.axlInfluence.decisionImpact === 'penalty')
-      && attempt < maxAttempts;
+    const shouldRetry =
+      (riskResult.decision === 'reject' || riskOutput.axlInfluence.decisionImpact === 'penalty') &&
+      attempt < maxAttempts;
 
     if (shouldRetry) {
       attempt++;
-      reasonForRetry = riskResult.decision === 'reject'
-        ? riskResult.reasoning
-        : `AXL peer consensus triggered retry (approval ratio: ${riskOutput.axlInfluence.approvalRatio})`;
+      reasonForRetry =
+        riskResult.decision === 'reject'
+          ? riskResult.reasoning
+          : `AXL peer consensus triggered retry (approval ratio: ${riskOutput.axlInfluence.approvalRatio})`;
 
-      trace.push({ agent: SYSTEM_AGENT, step: 'retry',
+      trace.push({
+        agent: SYSTEM_AGENT,
+        step: 'retry',
         message: `Retrying: ${reasonForRetry}`,
         metadata: {
           previousProtocol: selectedOption.protocol,
@@ -234,11 +320,18 @@ export class ExecutionService {
           ensInfluence: lastEnsInfluence,
           axlInfluence: lastAxlInfluence,
         },
-        timestamp: ts });
+        timestamp: ts,
+      });
       ts += 10;
 
       try {
-        yieldResult = await this.yieldAgent.think(request.intent, attempt, trace, ts, traceMetadata);
+        yieldResult = await this.yieldAgent.think(
+          request.intent,
+          attempt,
+          trace,
+          ts,
+          traceMetadata
+        );
       } catch (error) {
         return this.buildYieldUnavailableResponse(request, trace, ts, ensContext, error);
       }
@@ -263,13 +356,37 @@ export class ExecutionService {
       riskConfidence = riskOutput.confidence;
       lastEnsInfluence = riskOutput.ensInfluence;
       lastAxlInfluence = riskOutput.axlInfluence;
+      lastMemoryInfluence = riskOutput.memoryInfluence;
+      if (lastMemoryInfluence) {
+        trace.push({
+          agent: 'risk.relay.eth',
+          step: 'memory',
+          message: lastMemoryInfluence.hasHistory
+            ? `Memory: ${lastMemoryInfluence.protocol} → ${lastMemoryInfluence.impact === 'boosted' ? 'strong' : lastMemoryInfluence.impact === 'penalized' ? 'weak' : 'neutral'} history (${lastMemoryInfluence.impact})`
+            : `Memory: ${lastMemoryInfluence.protocol} → no history (neutral)`,
+          metadata: {
+            protocol: lastMemoryInfluence.protocol,
+            hasHistory: lastMemoryInfluence.hasHistory,
+            impact: lastMemoryInfluence.impact,
+          },
+          timestamp: ts,
+        });
+        ts += 10;
+      }
     }
 
     // System: final plan
-    trace.push({ agent: SYSTEM_AGENT, step: 'evaluate',
+    trace.push({
+      agent: SYSTEM_AGENT,
+      step: 'evaluate',
       message: `Final plan: ${finalPlan.protocol} at ${finalPlan.apy}% APY`,
-      metadata: { protocol: finalPlan.protocol, apy: finalPlan.apy, riskLevel: finalPlan.riskLevel },
-      timestamp: ts });
+      metadata: {
+        protocol: finalPlan.protocol,
+        apy: finalPlan.apy,
+        riskLevel: finalPlan.riskLevel,
+      },
+      timestamp: ts,
+    });
     ts += 10;
 
     // Step 4: Prepare swap quote only. Final execution requires explicit user approval.
@@ -286,59 +403,146 @@ export class ExecutionService {
       swap: preparedSwapQuote ?? undefined,
     };
 
-    trace.push({ agent: SYSTEM_AGENT, step: 'approval_required',
+    trace.push({
+      agent: SYSTEM_AGENT,
+      step: 'approval_required',
       message: `Approval required before executing ${finalPlan.protocol}`,
-      metadata: { status: finalResult.status, protocol: finalResult.protocol, approvalRequired: true },
-      timestamp: ts });
+      metadata: {
+        status: finalResult.status,
+        protocol: finalResult.protocol,
+        approvalRequired: true,
+      },
+      timestamp: ts,
+    });
     ts += 10;
 
     // Confidence — clamp to [0, 0.95]
     const clampedYield = normalizeConfidence(Math.min(0.95, Math.max(0, yieldConfidence)));
     const clampedRisk = normalizeConfidence(Math.min(0.95, Math.max(0, riskConfidence)));
-    const clampedExec = normalizeConfidence(0.9);
+    // Calculate dynamic execution confidence
+    let baseExecConfidence = 0.85;
+    if (attempt > 1) baseExecConfidence -= 0.1; // Penalize for retries
+    if (finalPlan.riskLevel === 'low') baseExecConfidence += 0.05; // Bonus for stable risk profile
+    if (preparedSwapQuote) baseExecConfidence += 0.05; // Bonus for successful pre-execution quote
+    const clampedExec = normalizeConfidence(Math.min(0.95, Math.max(0, baseExecConfidence)));
     const avgConfidence = normalizeConfidence((clampedYield + clampedRisk + clampedExec) / 3);
 
     // Decision impact — explicit ENS + AXL descriptions
     const ensImpactDesc = lastEnsInfluence
-      ? lastEnsInfluence.tier === 'strong' ? `increased risk tolerance due to strong ENS (${lastEnsInfluence.reputationScore})`
-        : lastEnsInfluence.tier === 'weak' ? `decreased risk tolerance due to weak ENS (${lastEnsInfluence.reputationScore})`
-        : 'no ENS influence (neutral tier)'
+      ? lastEnsInfluence.tier === 'strong'
+        ? `increased risk tolerance due to strong ENS (${lastEnsInfluence.reputationScore})`
+        : lastEnsInfluence.tier === 'weak'
+          ? `decreased risk tolerance due to weak ENS (${lastEnsInfluence.reputationScore})`
+          : 'no ENS influence (neutral tier)'
       : 'no ENS context available';
 
     const axlImpactDesc = lastAxlInfluence
-      ? lastAxlInfluence.decisionImpact === 'boost' ? `boosted confidence via peer agreement (${lastAxlInfluence.approvalRatio} approval)`
-        : lastAxlInfluence.decisionImpact === 'penalty' ? `reduced confidence via peer disagreement (${lastAxlInfluence.approvalRatio} approval)`
-        : lastAxlInfluence.decisionImpact === 'retry' ? `triggered retry due to peer disagreement`
-        : 'no AXL influence on decision'
+      ? lastAxlInfluence.decisionImpact === 'boost'
+        ? `boosted confidence via peer agreement (${lastAxlInfluence.approvalRatio} approval)`
+        : lastAxlInfluence.decisionImpact === 'penalty'
+          ? `reduced confidence via peer disagreement (${lastAxlInfluence.approvalRatio} approval)`
+          : lastAxlInfluence.decisionImpact === 'retry'
+            ? `triggered retry due to peer disagreement`
+            : 'no AXL influence on decision'
       : 'no AXL responses';
 
-    const decisionImpact: DecisionImpact = { ens: ensImpactDesc, axl: axlImpactDesc };
+    const memoryImpactDesc =
+      lastMemoryInfluence && lastMemoryInfluence.hasHistory
+        ? lastMemoryInfluence.impact === 'boosted'
+          ? `increased confidence due to high historical success (${Math.round(lastMemoryInfluence.successRate * 100)}%)`
+          : lastMemoryInfluence.impact === 'penalized'
+            ? `decreased confidence due to low historical success (${Math.round(lastMemoryInfluence.successRate * 100)}%)`
+            : 'neutral memory influence'
+        : 'no historical memory context';
 
-    // Explanation
-    const explanation = attempt > 1
-      ? `Initially selected ${initialProtocol} for higher yield, but switched to ${finalPlan.protocol} due to risk constraints. Review and approve before execution.`
-      : `Selected ${finalPlan.protocol} with ${finalPlan.apy}% APY. Review and approve before execution.`;
+    const decisionImpact: DecisionImpact = {
+      ens: ensImpactDesc,
+      axl: axlImpactDesc,
+      memory: memoryImpactDesc,
+    };
+
+    // Generate final LLM explanation AFTER protocol is finalized
+    let llmExplanation: string | null = null;
+    if (this.reasoningAdapter.isEnabled()) {
+      // Build context for final explanation
+      const finalContext = {
+        selectedProtocol: finalPlan.protocol,
+        apy: finalPlan.apy,
+        riskLevel: finalPlan.riskLevel ?? 'unknown',
+        wasRetried: attempt > 1,
+        initialProtocol: attempt > 1 ? initialProtocol : undefined,
+        reasonForRetry: reasonForRetry,
+        ensInfluence: lastEnsInfluence,
+        memoryInfluence: lastMemoryInfluence,
+      };
+
+      llmExplanation = await this.reasoningAdapter.explainFinalDecision(
+        finalContext,
+        request.intent
+      );
+
+      if (llmExplanation) {
+        trace.push({
+          agent: SYSTEM_AGENT,
+          step: 'explain',
+          message: `Final LLM explanation: ${llmExplanation}`,
+          metadata: { llmGenerated: true, isFinalExplanation: true },
+          timestamp: ts,
+        });
+        ts += 10;
+      }
+    }
+
+    const memoryPart =
+      lastMemoryInfluence && lastMemoryInfluence.impact !== 'neutral'
+        ? ` and ${lastMemoryInfluence.impact} historical performance`
+        : '';
+
+    // Use final LLM explanation if available, otherwise fall back to template
+    const explanation = llmExplanation
+      ? `${llmExplanation} Review and approve before execution.`
+      : attempt > 1
+        ? `Initially selected ${initialProtocol} for higher yield, but switched to ${finalPlan.protocol} due to risk constraints${memoryPart}. Review and approve before execution.`
+        : `Selected ${finalPlan.protocol} with ${finalPlan.apy}% APY based on current yield${memoryPart}. Review and approve before execution.`;
 
     // --- Section 3: Trace assertions ---
-    const agentsSeen = new Set(trace.map(t => t.agent));
-    const requiredAgents = ['system.relay.eth', 'yield.relay.eth', 'risk.relay.eth', 'executor.relay.eth'];
+    const agentsSeen = new Set(trace.map((t) => t.agent));
+    const requiredAgents = [
+      'system.relay.eth',
+      'yield.relay.eth',
+      'risk.relay.eth',
+      'executor.relay.eth',
+    ];
     for (const agent of requiredAgents) {
       if (!agentsSeen.has(agent)) {
-        trace.push({ agent: SYSTEM_AGENT, step: 'normalize', message: `Trace normalized: missing entries from ${agent}`, timestamp: ts });
+        trace.push({
+          agent: SYSTEM_AGENT,
+          step: 'normalize',
+          message: `Trace normalized: missing entries from ${agent}`,
+          timestamp: ts,
+        });
         ts += 10;
       }
     }
 
     // --- Section 4: Output contract validation ---
-    const isValidResult = finalResult.protocol.length > 0
-      && finalResult.apy.endsWith('%')
-      && (finalResult.status === 'pending_approval' || finalResult.status === 'success' || finalResult.status === 'failed')
-      && explanation.length > 10
-      && ensImpactDesc.length > 0
-      && axlImpactDesc.length > 0;
+    const isValidResult =
+      finalResult.protocol.length > 0 &&
+      finalResult.apy.endsWith('%') &&
+      (finalResult.status === 'pending_approval' ||
+        finalResult.status === 'success' ||
+        finalResult.status === 'failed') &&
+      explanation.length > 10 &&
+      ensImpactDesc.length > 0 &&
+      axlImpactDesc.length > 0;
 
     if (!isValidResult) {
-      trace.push({ agent: SYSTEM_AGENT, step: 'normalize', message: 'Execution completed with degraded validation safeguards', timestamp: ts });
+      trace.push({
+        agent: SYSTEM_AGENT,
+        step: 'normalize',
+        message: 'Execution completed with degraded validation safeguards',
+        timestamp: ts,
+      });
       ts += 10;
     }
 
@@ -371,6 +575,7 @@ export class ExecutionService {
       ensReputationScore: ensContext.reputationScore,
       ensInfluence: lastEnsInfluence,
       axlInfluence: lastAxlInfluence,
+      memoryInfluence: lastMemoryInfluence,
       decisionImpact,
       clampedYield,
       clampedRisk,
@@ -392,6 +597,13 @@ export class ExecutionService {
         ensReputationScore: ensContext.reputationScore,
         ensInfluence: lastEnsInfluence,
         axlInfluence: lastAxlInfluence,
+        memoryInfluence: lastMemoryInfluence
+          ? {
+              protocol: lastMemoryInfluence.protocol,
+              hasHistory: lastMemoryInfluence.hasHistory,
+              impact: lastMemoryInfluence.impact,
+            }
+          : undefined,
         confidenceBreakdown: { yield: clampedYield, risk: clampedRisk, execution: clampedExec },
       },
     };
@@ -399,8 +611,9 @@ export class ExecutionService {
 
   async execute(request: ExecutionRequest): Promise<ExecutionResponse> {
     const analysis = await this.analyze(request);
+    // If analysis failed (e.g. yield unavailable), return the analysis directly instead of throwing
     if (!analysis.approval) {
-      throw new Error('Execution approval was not created');
+      return analysis;
     }
     return this.confirmExecution(analysis.approval.id);
   }
@@ -452,7 +665,9 @@ export class ExecutionService {
     ts += 10;
 
     const clampedExec = normalizeConfidence(Math.min(0.95, Math.max(0, executorOutput.confidence)));
-    const avgConfidence = normalizeConfidence((pending.clampedYield + pending.clampedRisk + clampedExec) / 3);
+    const avgConfidence = normalizeConfidence(
+      (pending.clampedYield + pending.clampedRisk + clampedExec) / 3
+    );
 
     if (finalResult.status === 'success') {
       ts = await this.persistExecutionMemory(
@@ -466,9 +681,57 @@ export class ExecutionService {
       );
     }
 
-    const explanation = pending.attempt > 1
-      ? `Initially selected ${pending.initialProtocol} for higher yield, but switched to ${pending.finalPlan.protocol} due to risk constraints. Successfully executed deposit.`
-      : `Selected ${pending.finalPlan.protocol} with ${pending.finalPlan.apy}% APY. Successfully executed deposit.`;
+    // Generate final LLM explanation AFTER execution is complete
+    let llmExplanation: string | null = null;
+    if (this.reasoningAdapter.isEnabled()) {
+      const memoryInfluence = (pending as any).memoryInfluence as
+        | import('../types').MemoryInfluence
+        | undefined;
+
+      // Build context for final explanation
+      const finalContext = {
+        selectedProtocol: pending.finalPlan.protocol,
+        apy: pending.finalPlan.apy,
+        riskLevel: pending.finalPlan.riskLevel ?? 'unknown',
+        wasRetried: pending.attempt > 1,
+        initialProtocol: pending.attempt > 1 ? pending.initialProtocol : undefined,
+        reasonForRetry: pending.reasonForRetry,
+        ensInfluence: pending.ensInfluence,
+        memoryInfluence: memoryInfluence,
+        executionStatus: finalResult.status,
+      };
+
+      llmExplanation = await this.reasoningAdapter.explainFinalDecision(
+        finalContext,
+        pending.request.intent
+      );
+
+      if (llmExplanation) {
+        trace.push({
+          agent: SYSTEM_AGENT,
+          step: 'explain',
+          message: `Final LLM explanation: ${llmExplanation}`,
+          metadata: { llmGenerated: true, isFinalExplanation: true },
+          timestamp: ts,
+        });
+        ts += 10;
+      }
+    }
+
+    const memoryInfluence = (pending as any).memoryInfluence as
+      | import('../types').MemoryInfluence
+      | undefined;
+    const memoryPart =
+      memoryInfluence && memoryInfluence.impact !== 'neutral'
+        ? ` and ${memoryInfluence.impact} historical performance`
+        : '';
+
+    // Use final LLM explanation if available, otherwise fall back to template
+    const explanation = llmExplanation
+      ? `${llmExplanation} Successfully executed deposit.`
+      : pending.attempt > 1
+        ? `Initially selected ${pending.initialProtocol} for higher yield, but switched to ${pending.finalPlan.protocol} due to risk constraints${memoryPart}. Successfully executed deposit.`
+        : `Selected ${pending.finalPlan.protocol} with ${pending.finalPlan.apy}% APY${memoryPart}. Successfully executed deposit.`;
 
     const summary: ExecutionSummary = {
       selectedProtocol: pending.finalPlan.protocol,
@@ -495,7 +758,18 @@ export class ExecutionService {
         ensReputationScore: pending.ensReputationScore,
         ensInfluence: pending.ensInfluence,
         axlInfluence: pending.axlInfluence,
-        confidenceBreakdown: { yield: pending.clampedYield, risk: pending.clampedRisk, execution: clampedExec },
+        memoryInfluence: pending.memoryInfluence
+          ? {
+              protocol: pending.memoryInfluence.protocol,
+              hasHistory: pending.memoryInfluence.hasHistory,
+              impact: pending.memoryInfluence.impact,
+            }
+          : undefined,
+        confidenceBreakdown: {
+          yield: pending.clampedYield,
+          risk: pending.clampedRisk,
+          execution: clampedExec,
+        },
       },
     };
   }
@@ -520,7 +794,12 @@ export class ExecutionService {
   ): Promise<{ option: YieldOption; timestamp: number }> {
     if (!memoryAdapter.isEnabled()) return { option: fallbackOption, timestamp };
 
-    const scoredOptions: Array<{ option: YieldOption; successRate: number; avgConfidence: number; executionCount: number }> = [];
+    const scoredOptions: Array<{
+      option: YieldOption;
+      successRate: number;
+      avgConfidence: number;
+      executionCount: number;
+    }> = [];
 
     for (const option of options) {
       if (option.protocol.trim().toLowerCase() === rejectedProtocol.trim().toLowerCase()) continue;
@@ -633,7 +912,8 @@ export class ExecutionService {
       attempt: 0,
     };
 
-    const explanation = 'Could not select a protocol because no live or cached yield data was available.';
+    const explanation =
+      'Could not select a protocol because no live or cached yield data was available.';
 
     return {
       intent: request.intent,

@@ -43,7 +43,12 @@ describe('Full Integration', () => {
     }
 
     // Only valid agent names
-    const validNames = ['yield.relay.eth', 'risk.relay.eth', 'executor.relay.eth', 'system.relay.eth'];
+    const validNames = [
+      'yield.relay.eth',
+      'risk.relay.eth',
+      'executor.relay.eth',
+      'system.relay.eth',
+    ];
     for (const e of r.trace) {
       expect(validNames).toContain(e.agent);
     }

@@ -4,67 +4,73 @@ RelayX is an intent-centric DeFi execution engine. You tell it what you want —
 
 ## How It Works
 
-1. **YieldAgent** fetches live APY data from DefiLlama, merges AXL peer suggestions, and selects the highest-yielding protocol.
-2. **RiskAgent** evaluates the selection using real ENS on-chain reputation data, AXL network peer consensus, and 0G-backed historical protocol memory. If risk is too high, it rejects.
-3. On rejection, the system **retries** with the next-best protocol, preferring historically stronger protocols when memory is available.
-4. **ExecutorAgent** gets a real swap quote from Uniswap or CoinGecko, prepares the approved deposit result, and broadcasts the result to the AXL network.
+1. **YieldAgent**: Fetches live APY data from DefiLlama, merges AXL peer suggestions, and selects the highest-yielding protocol.
+2. **RiskAgent**: Evaluates the selection using real ENS on-chain reputation data, AXL network peer consensus, and **0G-backed historical protocol memory**. If risk is too high, it rejects.
+3. **Multi-Factor Decision Logic**: On rejection, the system **retries** with the next-best protocol, preferring historically stronger protocols when memory is available.
+4. **ExecutorAgent**: Gets a real swap quote from Uniswap or CoinGecko, prepares the approved deposit result, and computes a dynamic execution confidence score.
+5. **Explainable AI**: An LLM-enhanced reasoning layer (Groq/Llama) provides a natural language explanation for every decision, including the trade-offs made between yield, risk, and memory.
 
-Every step produces a structured trace entry, so the entire decision process is auditable.
+## Key Features
+
+- **Confidence Breakdown**: Every execution displays a 3-part confidence score (Yield, Risk, Execution).
+- **Historical Memory**: Protocols are boosted or penalized based on past success rates stored in the 0G memory layer.
+- **ENS Reputation**: Real-time on-chain scoring of the user's ENS name affects the system's risk tolerance.
+- **AXL Consensus**: Decisions are verified against a P2P network of agent nodes.
 
 ## Key Integrations
 
-| Integration | What It Does | Data Source |
-|---|---|---|
-| **DefiLlama** | Live DeFi yield data | `https://yields.llama.fi/pools` |
-| **ENS** | On-chain reputation scoring | Ethereum mainnet via viem |
-| **Uniswap** | Authenticated swap route quotes | `https://api.uniswap.org/v1/quote` |
-| **CoinGecko** | Spot-price quote fallback | `https://api.coingecko.com/api/v3/simple/price` |
-| **AXL** | Peer-to-peer agent consensus | Multi-node HTTP network |
-| **0G Storage** | Persistent execution memory | KV stats + append-only execution log |
-| **OpenAI** (optional) | LLM-enhanced reasoning | `OPENAI_API_KEY` |
-
-RelayX no longer ships synthetic yield or quote datapoints. If an upstream source is down, the backend uses cached upstream data when available; if no real or cached yield data exists, it returns a structured failed execution instead of inventing a protocol.
+| Integration           | What It Does                    | Data Source                                     |
+| --------------------- | ------------------------------- | ----------------------------------------------- |
+| **DefiLlama**         | Live DeFi yield data            | `https://yields.llama.fi/pools`                 |
+| **ENS**               | On-chain reputation scoring     | Ethereum mainnet via viem                       |
+| **Uniswap**           | Authenticated swap route quotes | `https://api.uniswap.org/v1/quote`              |
+| **CoinGecko**         | Spot-price quote fallback       | `https://api.coingecko.com/api/v3/simple/price` |
+| **AXL**               | Peer-to-peer agent consensus    | Multi-node HTTP network                         |
+| **0G Storage**        | Persistent execution memory     | KV stats + append-only execution log            |
+| **Groq / OpenRouter** | LLM-enhanced reasoning          | `GROQ_API_KEY` or `OPENROUTER_API_KEY`          |
 
 ## Quick Start
 
+### 1. Configure Environment
+
+Copy `backend/.env.example` to `backend/.env` and fill in your keys:
+
+- `GROQ_API_KEY`: Required for natural language reasoning.
+- `ALCHEMY_MAINNET_RPC_URL`: Highly recommended for ENS resolution (avoids public RPC timeouts).
+- `UNISWAP_API_KEY`: Optional; falls back to CoinGecko if missing.
+
+### 2. Run Services
+
+Run each of these in a separate terminal:
+
 ```bash
-# 1. Set environment (ENS requires Alchemy RPC)
-export ALCHEMY_MAINNET_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/<key>"
-export UNISWAP_API_KEY="<key>"          # optional; CoinGecko quote fallback works without it
-export COINGECKO_API_KEY="<key>"        # optional; improves CoinGecko rate limits
-export ZEROG_MEMORY_KV_URL="<0g-kv-rpc>"      # optional; enables protocol stats
-export ZEROG_MEMORY_LOG_URL="<0g-log-rpc>"    # optional; enables execution history
+# 1. Start AXL Peer Node (handles consensus)
+cd backend && npm run axl:node
 
-# 2. Backend
-cd backend && npm install && npm run dev    # port 3001
+# 2. Start Backend Server
+cd backend && npm run dev
 
-# 3. Frontend
-cd frontend && npm install && npm run dev   # port 3000
+# 3. Start Frontend Dashboard
+cd frontend && npm run dev
+```
 
-# 4. Tests (129 tests)
+### 3. Verification
+
+Visit `http://localhost:3000` to open the dashboard. You can also run the full test suite:
+
+```bash
 cd backend && npm test
 ```
 
-## API
+## API Reference
 
 ```bash
-# Health checks
-curl http://localhost:3001/health
-curl http://localhost:3001/axl-health
-curl http://localhost:3001/yield-health
-curl http://localhost:3001/ens-health
-
 # Execute intent
-curl -X POST http://localhost:3001/execute \
-  -H "Content-Type: application/json" \
-  -d '{"intent":"get best yield on ETH"}'
-
-# With ENS context
 curl -X POST http://localhost:3001/execute \
   -H "Content-Type: application/json" \
   -d '{"intent":"get best yield on ETH","context":{"ens":"vitalik.eth"}}'
 
-# Demo mode (seeded 0G memory: Morpho low, Aave high)
+# Demo mode (uses seeded 0G memory for Aave/Morpho)
 curl -X POST http://localhost:3001/execute \
   -H "Content-Type: application/json" \
   -d '{"intent":"get best yield on ETH","context":{"demo":true}}'
@@ -76,17 +82,15 @@ curl -X POST http://localhost:3001/execute \
 RelayX/
 ├── backend/           # Express + TypeScript API
 │   ├── src/
-│   │   ├── orchestrator/    # ExecutionService
-│   │   ├── agents/          # YieldAgent, RiskAgent, ExecutorAgent
-│   │   ├── adapters/        # ENS, AXL, DefiLlama, 0G memory, LLM adapters
-│   │   ├── controllers/     # Express route handlers
-│   │   ├── types/           # TypeScript interfaces (zero any)
-│   │   └── __tests__/       # 129 tests (vitest)
-│   └── scripts/             # AXL development relay
-├── frontend/          # Next.js UI
-└── docs/              # Documentation
+│   │   ├── orchestrator/    # ExecutionService (Core logic)
+│   │   ├── agents/          # Yield, Risk, and Executor Agents
+│   │   ├── adapters/        # ENS, AXL, DefiLlama, 0G, LLM
+│   │   └── controllers/     # API routes
+│   └── scripts/             # AXL simulation node
+├── frontend/          # Next.js Dashboard UI
+└── docs/              # Detailed architecture & integration guides
 ```
 
 ## Documentation
 
-See [`docs/`](docs/README.md) for architecture, API reference, backend deep dive, and development runbook.
+See [`docs/`](docs/README.md) for architecture diagrams, API reference, and development runbooks.
