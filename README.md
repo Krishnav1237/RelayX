@@ -1,96 +1,212 @@
 # RelayX
 
-RelayX is an intent-centric DeFi execution engine. You tell it what you want — "get best yield on ETH" — and three AI agents collaborate to find the optimal protocol, assess risk using on-chain ENS reputation and AXL peer consensus, and execute the deposit. Every decision is traceable and explainable.
+> Autonomous DeFi agent system for intelligent yield farming with deterministic decision-making, on-chain reputation signals, and cross-node collaboration.
 
-## How It Works
+## Overview
 
-1. **YieldAgent**: Fetches live APY data from DefiLlama, merges AXL peer suggestions, and selects the highest-yielding protocol.
-2. **RiskAgent**: Evaluates the selection using real ENS on-chain reputation data, AXL network peer consensus, and **0G-backed historical protocol memory**. If risk is too high, it rejects.
-3. **Multi-Factor Decision Logic**: On rejection, the system **retries** with the next-best protocol, preferring historically stronger protocols when memory is available.
-4. **ExecutorAgent**: Gets a real swap quote from Uniswap or CoinGecko, prepares the approved deposit result, and computes a dynamic execution confidence score.
-5. **Explainable AI**: An LLM-enhanced reasoning layer (Groq/Llama) provides a natural language explanation for every decision, including the trade-offs made between yield, risk, and memory.
+RelayX is a production-ready agent orchestration framework built with:
 
-## Key Features
-
-- **Confidence Breakdown**: Every execution displays a 3-part confidence score (Yield, Risk, Execution).
-- **Historical Memory**: Protocols are boosted or penalized based on past success rates stored in the 0G memory layer.
-- **ENS Reputation**: Real-time on-chain scoring of the user's ENS name affects the system's risk tolerance.
-- **AXL Consensus**: Decisions are verified against a P2P network of agent nodes.
-
-## Key Integrations
-
-| Integration           | What It Does                    | Data Source                                     |
-| --------------------- | ------------------------------- | ----------------------------------------------- |
-| **DefiLlama**         | Live DeFi yield data            | `https://yields.llama.fi/pools`                 |
-| **ENS**               | On-chain reputation scoring     | Ethereum mainnet via viem                       |
-| **Uniswap**           | Authenticated swap route quotes | `https://api.uniswap.org/v1/quote`              |
-| **CoinGecko**         | Spot-price quote fallback       | `https://api.coingecko.com/api/v3/simple/price` |
-| **AXL**               | Peer-to-peer agent consensus    | Multi-node HTTP network                         |
-| **0G Storage**        | Persistent execution memory     | KV stats + append-only execution log            |
-| **Groq / OpenRouter** | LLM-enhanced reasoning          | `GROQ_API_KEY` or `OPENROUTER_API_KEY`          |
+- **YieldAgent**: Analyzes user intent and fetches live yield data from DefiLlama
+- **RiskAgent**: Evaluates protocols against deterministic risk thresholds
+- **ExecutorAgent**: Prepares and executes deposits with swap quoting
+- **ENS Reputation Layer**: Uses real on-chain ENS data (vitalik.eth, ens.eth, nick.eth) as reputation signals
+- **AXL Integration**: Enables cross-node agent collaboration via a local infrastructure node
+- **Deterministic Logic**: Core decisions are rule-based (no LLM required); optional LLM for explanations
+- **Full Trace & Memory**: Complete execution history with confidence metrics and protocol success tracking
+- **Type-Safe API**: TypeScript backend (Express) + Next.js/React frontend
 
 ## Quick Start
 
-### 1. Configure Environment
+### Prerequisites
 
-Copy `backend/.env.example` to `backend/.env` and fill in your keys:
+- Node.js 18+
+- npm or yarn
 
-- `GROQ_API_KEY`: Required for natural language reasoning.
-- `ALCHEMY_MAINNET_RPC_URL`: Highly recommended for ENS resolution (avoids public RPC timeouts).
-- `UNISWAP_API_KEY`: Optional; falls back to CoinGecko if missing.
-
-### 2. Run Services
-
-Run each of these in a separate terminal:
+### Backend Setup
 
 ```bash
-# 1. Start AXL Peer Node (handles consensus)
-cd backend && npm run axl:node
-
-# 2. Start Backend Server
-cd backend && npm run dev
-
-# 3. Start Frontend Dashboard
-cd frontend && npm run dev
+cd backend
+npm install
+npm run dev
 ```
 
-### 3. Verification
+Backend API runs on `http://localhost:3001`:
+- `POST /analyze` — Analyze intent, receive pending approval with trace
+- `POST /execute/confirm` — Execute approved plan
+- `POST /execute` — Convenience: analyze + execute in one call
+- `GET /health` — Server health
+- `GET /axl-health` — AXL infrastructure status
+- `GET /yield-health` — DefiLlama data availability
+- `GET /ens-health` — ENS resolution capability
 
-Visit `http://localhost:3000` to open the dashboard. You can also run the full test suite:
+### Frontend Setup
 
 ```bash
-cd backend && npm test
+cd frontend
+npm install
+npm run dev
 ```
 
-## API Reference
+Frontend runs on `http://localhost:3000` and proxies `/api/*` to backend.
+
+### Optional: Local AXL Infrastructure Node
 
 ```bash
-# Execute intent
-curl -X POST http://localhost:3001/execute \
-  -H "Content-Type: application/json" \
-  -d '{"intent":"get best yield on ETH","context":{"ens":"vitalik.eth"}}'
-
-# Demo mode (uses seeded 0G memory for Aave/Morpho)
-curl -X POST http://localhost:3001/execute \
-  -H "Content-Type: application/json" \
-  -d '{"intent":"get best yield on ETH","context":{"demo":true}}'
+cd backend
+npm run axl:node
 ```
 
-## Repository Layout
+Starts AXL mock/relay node on `http://localhost:3005` (configurable via `AXL_BASE_URL`).
 
-```
-RelayX/
-├── backend/           # Express + TypeScript API
-│   ├── src/
-│   │   ├── orchestrator/    # ExecutionService (Core logic)
-│   │   ├── agents/          # Yield, Risk, and Executor Agents
-│   │   ├── adapters/        # ENS, AXL, DefiLlama, 0G, LLM
-│   │   └── controllers/     # API routes
-│   └── scripts/             # AXL simulation node
-├── frontend/          # Next.js Dashboard UI
-└── docs/              # Detailed architecture & integration guides
+## Execution Lifecycle
+
+### Analyze → Approve → Execute Flow
+
+1. **User sends intent** → `POST /analyze`
+2. **YieldAgent** evaluates intent → fetches live yield options
+3. **RiskAgent** assesses risk vs. APY → approves or rejects
+4. **Retry (if needed)** → YieldAgent selects second option, RiskAgent reviews
+5. **Pre-execution quote** → ExecutorAgent fetches Uniswap swap quote
+6. **Pending approval** → Response includes `approval.id` (5 min TTL)
+7. **User reviews** → `POST /execute/confirm` with approval ID
+8. **ExecutorAgent** executes → returns final result with full trace
+
+**Convenience**: `/execute` skips approval and runs all steps in one call.
+
+## Key Features
+
+| Feature | Details |
+|---------|---------|
+| **ENS Signals** | Resolves vitalik.eth, ens.eth, nick.eth to derive reputation score (0.0–1.0) → affects RiskAgent confidence |
+| **Memory Layer** | Tracks protocol success rates; influences retry selection and confidence adjustments |
+| **AXL Broadcast** | YieldAgent broadcasts yield requests; RiskAgent requests consensus; ExecutorAgent signals results |
+| **Deterministic** | All decisions use rule-based logic; no randomness; same input → same output |
+| **Timeout Protection** | ENS calls, yield data, swaps all have timeout guards; failures degrade gracefully |
+| **Caching** | ENS (5 min TTL), yield data, swap quotes all cached to reduce redundant calls |
+
+## Configuration
+
+### Backend Environment
+
+```bash
+# RPC for ENS resolution (Alchemy recommended)
+ALCHEMY_MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+
+# AXL infrastructure node URL
+AXL_BASE_URL=http://localhost:3005
+
+# Optional: LLM for explanations (OpenRouter or Groq)
+OPENROUTER_API_KEY=sk-...
+GROQ_API_KEY=gsk-...
+
+# Optional: Uniswap API for swap quotes
+UNISWAP_API_KEY=your_uniswap_api_key
+
+# Optional: 0G Memory storage
+ZEROG_MEMORY_KV_URL=...
+ZEROG_MEMORY_LOG_URL=...
 ```
 
 ## Documentation
 
-See [`docs/`](docs/README.md) for architecture diagrams, API reference, and development runbooks.
+- [Architecture & Data Flow](./docs/architecture.md)
+- [Backend Design](./docs/backend.md) — Agents, adapters, orchestration
+- [Frontend Implementation](./docs/frontend.md) — UI flow, API integration
+- [API Reference](./docs/api-reference.md) — Request/response contracts
+- [Development Runbook](./docs/development-runbook.md) — Local setup, debugging
+- [Current Limitations](./docs/current-limitations.md) — Known constraints
+- [Repository Map](./docs/repository-map.md) — File structure
+- [LLM Setup](./docs/llm-setup.md) — Optional reasoning adapter config
+
+## Testing
+
+```bash
+cd backend
+npm run test        # Run full test suite (Vitest)
+npm run test:watch  # Watch mode
+```
+
+Test suite covers:
+- Agent decision logic (YieldAgent, RiskAgent, ExecutorAgent)
+- Adapter behavior (ENS, AXL, Uniswap, memory)
+- End-to-end execution scenarios
+- Edge cases and confidence bounds
+
+## Architecture Diagram
+
+```
+Frontend (Next.js/React)
+    ↓ /api/analyze, /api/execute
+Backend (Express/TypeScript)
+    ↓
+ExecutionService (Orchestrator)
+    ├── YieldAgent (fetch + merge)
+    ├── RiskAgent (approve/reject)
+    ├── ExecutorAgent (quote + execute)
+    └── Adapters
+        ├── ENSAdapter (viem + cache)
+        ├── YieldDataAdapter (DefiLlama + cache)
+        ├── UniswapAdapter (quote fallback to CoinGecko)
+        ├── AXLAdapter (broadcast to peers)
+        ├── ZeroGMemoryAdapter (optional)
+        └── ReasoningAdapter (optional LLM)
+    ↓
+AXL Infrastructure Node (optional, localhost:3005)
+```
+
+## Examples
+
+### Simple Yield Request
+
+```bash
+curl -X POST http://localhost:3001/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "intent": "find best yield on ETH",
+    "context": { "debug": true }
+  }'
+```
+
+### With User ENS
+
+```bash
+curl -X POST http://localhost:3001/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "intent": "find best USDC yield",
+    "context": {
+      "ens": "vitalik.eth",
+      "debug": true
+    }
+  }'
+```
+
+### Two-Step Approval Flow
+
+```bash
+# Step 1: Analyze
+APPROVAL=$(curl -X POST http://localhost:3001/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"intent":"find best yield on ETH"}' | jq -r '.approval.id')
+
+# Step 2: Confirm
+curl -X POST http://localhost:3001/execute/confirm \
+  -H "Content-Type: application/json" \
+  -d "{\"approvalId\":\"$APPROVAL\"}"
+```
+
+## Deployment
+
+The system is designed for:
+- **Local development**: All services run locally
+- **Production**: Backend API + AXL nodes deployed independently
+- **Cloud**: Containerized via Docker (add `Dockerfile` in backend/frontend as needed)
+
+See [development-runbook.md](./docs/development-runbook.md) for deployment steps.
+
+## Contributing
+
+- Follow TypeScript strict mode conventions
+- Add tests for new adapters and agent logic
+- Update relevant docs when changing behavior
+- Ensure all commands in docs remain accurate

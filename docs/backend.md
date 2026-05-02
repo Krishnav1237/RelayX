@@ -1,213 +1,378 @@
-# Backend Deep Dive
+# Backend Design
 
-## Stack
+Complete guide to the ExecutionService orchestrator, agents, and adapters.
 
-- **Runtime**: Node.js + TypeScript (strict mode, zero `any`)
-- **Framework**: Express 5
-- **Testing**: Vitest (129 tests across 14 files)
-- **ENS**: viem + Alchemy RPC (real Ethereum mainnet)
-- **Yield Data**: DefiLlama API (live, cached; no synthetic fallback data)
-- **Swap Quotes**: Uniswap Trading API when `UNISWAP_API_KEY` is set; CoinGecko spot prices otherwise
-- **AXL**: Multi-node HTTP adapter (3 nodes, parallel broadcast)
-- **Memory**: 0G Storage KV protocol stats + append-only execution log
-- **LLM**: Optional OpenRouter/Groq integration (safe mode, never overrides)
+## Orchestrator: ExecutionService
 
-## Entry Point (`src/index.ts`)
+**Location**: `backend/src/orchestrator/ExecutionService.ts`
 
-- Express server on port 3001
-- Boot logging: ENS RPC status, AXL base URL, LLM enabled/disabled
-- Routes:
-  - `GET /health` — uptime check
-  - `GET /axl-health` — pings all 3 AXL nodes, returns `{ status, nodesReachable }`
-  - `GET /yield-health` — tests DefiLlama fetch, returns `{ status, source, protocols }`
-  - `GET /ens-health` — resolves vitalik.eth, returns `{ status, addressResolved }`
-  - `POST /execute` — main orchestration endpoint
+Core responsibility: Orchestrate agents, manage state, handle retries.
 
-## Controller (`src/controllers/execute.controller.ts`)
+### Key Methods
 
-- Validates `intent` is a non-empty string
-- Passes optional `context` (ens, wallet, demo, debug) through
-- Returns 400 for invalid input, 500 for internal errors (no stack traces)
-- When `context.debug = true`: runs execution twice and logs determinism check
+#### `analyze(request: ExecutionRequest): Promise<ExecutionResponse>`
 
-## ExecutionService (`src/orchestrator/ExecutionService.ts`)
+1. Resolve ENS sources (user ENS, wallet ENS, defaults)
+2. Run YieldAgent → get options + selection
+3. Run RiskAgent → approve/reject
+4. If rejected and attempt < 2 → retry
+5. Pre-execute quote via ExecutorAgent
+6. Return pending approval (5 min TTL)
 
-The core orchestration brain. Full pipeline:
+#### `confirmExecution(approvalId: string): Promise<ExecutionResponse>`
 
-### Phase 1: ENS Resolution
+1. Retrieve pending execution by ID
+2. Execute via ExecutorAgent
+3. Store execution in memory
+4. Return final result
 
-1. Builds ENS source list: user ENS → wallet reverse lookup → fallback to vitalik.eth + defaults
-2. Resolves up to 3 sources in parallel
-3. Computes reputation score (boosted by github/twitter presence)
-4. If all ENS fails: neutral score (0.7), no penalties
+#### `execute(request): Promise<ExecutionResponse>`
 
-### Phase 2: Agent Orchestration
-
-1. **YieldAgent.think()** — fetches live yield data, broadcasts to AXL, selects best option
-2. **RiskAgent.review()** — evaluates with ENS tiers, AXL consensus, and 0G memory
-3. **Retry** — if rejected or AXL penalty, retries with next-best protocol, preferring stronger memory stats when available
-4. **ExecutorAgent.execute()** — deposits and broadcasts execution signal
-5. **ZeroGMemoryAdapter.storeExecution()** — appends execution history and updates protocol stats
-
-### Phase 3: Validation
-
-- Trace assertions: all 4 agents must appear, timestamps increasing
-- Output contract: protocol non-empty, APY ends with %, status valid, explanation > 10 chars
-- Confidence clamped to [0, 0.95]
-- If validation fails: corrective trace entry added
-
-### Phase 4: Response Assembly
-
-- Computes average confidence from all three agents (direct return values)
-- Builds `decisionImpact` with explicit ENS and AXL descriptions
-- Returns `ExecutionResponse` with trace, result, summary, debug
+Shortcut: calls `analyze()` then `confirmExecution()` automatically.
 
 ## Agents
 
-### BaseAgent (`src/agents/BaseAgent.ts`)
+### YieldAgent
 
-- Properties: `id`, `name` (ENS-style: `yield.relay.eth`, etc.)
-- `log()` method produces `AgentTrace` entries with timestamp and metadata merging
+**Location**: `backend/src/agents/YieldAgent.ts`
 
-### YieldAgent (`src/agents/YieldAgent.ts`)
+**Purpose**: Analyze intent, fetch yield data, select protocol.
 
-- Fetches live or cached upstream yield data from `YieldDataAdapter` (DefiLlama)
-- Validates: APY 0-50 and no empty protocols
-- Throws a controlled "yield unavailable" path when no live or cached options exist
-- Broadcasts `yield_request` to AXL, merges remote options (local priority)
-- Selects by attempt index for deterministic retry
-- Optional LLM reasoning enhancement
-- Returns confidence (boosted +0.03 for live data, +0.05 for retry)
+**Methods**:
 
-### RiskAgent (`src/agents/RiskAgent.ts`)
+```typescript
+async think(
+  intent: string,
+  attempt: number,
+  trace: AgentTrace[],
+  timestamp: number,
+  externalMetadata?: Record<string, unknown>
+): Promise<YieldThinkResult & { confidence: number }>
+```
 
-- ENS tiers: strong (≥0.9), neutral (0.7-0.9), weak (<0.7)
-- Strong ENS: +0.1 confidence, threshold 4.55
-- Weak ENS: -0.1 confidence, threshold 4.4, adds flag
-- Medium risk near threshold: extra scrutiny (+15 riskScore)
-- AXL consensus: ≥70% = +0.1 boost, <30% = -0.1 penalty
-- 0G memory: successRate > 0.9 gives +0.05 confidence; successRate < 0.6 gives -0.05 confidence and +10 riskScore
-- Emits memory trace entries with success rate, execution count, and influence
-- Optional LLM confidence blending (70/30 deterministic/LLM)
-- Decision: `riskScore >= 35` → reject
-- Returns `RiskReviewResult` + `confidence` + `ensInfluence` + `axlInfluence`
+**Logic**:
 
-### ExecutorAgent (`src/agents/ExecutorAgent.ts`)
+1. Extract asset from intent (ETH, USDC, USDT, etc.)
+2. Fetch live yield options from YieldDataAdapter
+3. Broadcast yield_request via AXL
+4. Merge local + remote options
+5. Sort by APY (descending)
+6. Select by attempt:
+   - Attempt 1: Highest APY
+   - Attempt 2: Second-highest APY (retry)
+7. Calculate confidence based on:
+   - APY gap between options
+   - Live data vs. cache
+   - Attempt number
 
-- Prepares a deposit execution result (no signed on-chain transaction yet)
-- Fetches swap quote from Uniswap if configured, otherwise CoinGecko spot prices
-- Broadcasts `execution_signal` to AXL
-- Fixed confidence: 0.9
-- User-facing narrative: "Deposit successful. Funds now generating yield at X% APY."
+**Confidence Range**: 0.0–0.95
+
+**Key Thresholds**:
+- Base: 0.7
+- APY gap bonus: +APY_gap/10
+- Live data bonus: +0.03
+- Retry bonus: +0.05
+
+### RiskAgent
+
+**Location**: `backend/src/agents/RiskAgent.ts`
+
+**Purpose**: Evaluate risk, apply reputation signals, approve/reject.
+
+**Methods**:
+
+```typescript
+async review(
+  plan: YieldOption,
+  trace: AgentTrace[],
+  timestamp: number,
+  externalMetadata?: Record<string, unknown>,
+  ensContext?: ENSReputationContext
+): Promise<{
+  result: { decision: 'approve' | 'reject', reasoning, riskScore, flags },
+  confidence: number,
+  ensInfluence?: ENSInfluence,
+  axlInfluence?: AXLInfluence,
+  memoryInfluence?: MemoryInfluence
+}>
+```
+
+**Decision Matrix**:
+
+```
+Risk Level │ APY ≤4.0 │ 4.0<APY≤4.5 │ APY > 4.5
+───────────┼──────────┼─────────────┼──────────────
+low        │ approve  │ approve     │ approve
+medium     │ approve  │ approve     │ reject (unless strong ENS)
+high       │ reject   │ reject      │ reject
+```
+
+**ENS Influence** (applied post-decision):
+
+- **Score ≥ 0.9** ("strong"): Allow medium-risk up to 4.6% APY, boost confidence
+- **0.7 ≤ Score < 0.9** ("neutral"): Standard thresholds
+- **Score < 0.7** ("weak"): Stricter limits, reduced confidence
+
+**AXL Influence**:
+
+- Broadcast risk_request to peers
+- Approval ratio < 0.3 → decisionImpact = "penalty" (triggers retry)
+- Approval ratio ≥ 0.7 → decisionImpact = "boost"
+- Otherwise → "none"
+
+**Memory Influence**:
+
+- High success rate (≥ 0.7) → boost confidence
+- Low success rate (< 0.5) → penalize, signal in retry
+- No history → neutral
+
+**Confidence Range**: 0.0–0.95
+
+### ExecutorAgent
+
+**Location**: `backend/src/agents/ExecutorAgent.ts`
+
+**Purpose**: Quote swaps, execute deposits, broadcast results.
+
+**Methods**:
+
+```typescript
+async quote(
+  plan: YieldOption,
+  trace: AgentTrace[],
+  timestamp: number,
+  externalMetadata?: Record<string, unknown>
+): Promise<{ swapQuote: UniswapQuoteResult | null, nextTimestamp: number }>
+```
+
+Fetches swap quote from Uniswap or CoinGecko.
+
+```typescript
+async execute(
+  plan: YieldOption,
+  trace: AgentTrace[],
+  attempt: number,
+  timestamp: number,
+  externalMetadata?: Record<string, unknown>,
+  preparedSwapQuote?: UniswapQuoteResult | null
+): Promise<{ result: ExecutionResult, confidence: number }>
+```
+
+Executes deposit and broadcasts execution_signal via AXL.
+
+**Confidence**: Fixed 0.9 (high, execution assumed to succeed).
+
+### BaseAgent
+
+**Location**: `backend/src/agents/BaseAgent.ts`
+
+**Responsibility**: Common logging interface.
+
+```typescript
+log(
+  step: string,
+  message: string,
+  metadata: Record<string, unknown> | undefined,
+  timestamp: number,
+  externalMetadata?: Record<string, unknown>
+): AgentTrace
+```
+
+Merges local metadata with external metadata (agent ID always in local metadata).
 
 ## Adapters
 
-### YieldDataAdapter (`src/adapters/YieldDataAdapter.ts`)
+### ENSAdapter
 
-- **Source**: DefiLlama `https://yields.llama.fi/pools`
-- Filters: asset match, Ethereum chain, $1M+ TVL, APY 0-50%
-- Protocol risk mapping: Aave/Compound/Spark → low, Morpho/Yearn/Curve → medium
-- In-memory cache: 60-second fresh TTL and 10-minute stale TTL, keyed by asset
-- Fallback behavior: cached upstream data only; returns an empty list when no real data exists
-- Adds source metadata, TVL, chain, and DefiLlama pool ID to each option
-- Timeout: 8 seconds
+**Location**: `backend/src/adapters/ENSAdapter.ts`
 
-### UniswapAdapter (`src/adapters/UniswapAdapter.ts`)
+**Responsibility**: Resolve ENS names, fetch text records, cache.
 
-- **Primary source**: Uniswap `https://api.uniswap.org/v1/quote` when `UNISWAP_API_KEY` is configured
-- **Secondary source**: CoinGecko `https://api.coingecko.com/api/v3/simple/price`
-- Converts token base units to human-readable quote amounts
-- In-memory cache: 30-second TTL, keyed by pair, amount, and chain
-- Unknown token pairs return `null`; no deterministic quote is fabricated
+**Methods**:
 
-### ENSAdapter (`src/adapters/ENSAdapter.ts`)
+```typescript
+async resolveName(name: string): Promise<string | null>
+async getTextRecords(name: string): Promise<Record<string, string>>
+```
 
-- Real Ethereum mainnet ENS resolution via viem
-- Resolves addresses + text records (description, url, twitter, github)
-- In-memory cache: 5-minute TTL
-- RPC fallback: Alchemy → Ankr
-- Per-call timeout: 1s per RPC attempt
+**Features**:
 
-### AXLAdapter (`src/adapters/AXLAdapter.ts`)
+- Viem client with RPC fallback (Alchemy → Ankr → public)
+- 5-minute cache TTL
+- 4000ms timeout per call
+- Returns null/empty on timeout/error
 
-- Multi-node: broadcasts to 3 nodes in parallel (`Promise.allSettled`)
-- Nodes: `AXL_BASE_URL`, `:3006`, `:3007`
-- No simulated responses — returns empty array when no nodes respond
-- Strict response validation: type guards for protocol, APY (0-50), decision values
-- Timeout: 1.5s per node
+**Text Records Fetched**: description, url, com.twitter, com.github
 
-### ZeroGMemoryAdapter (`src/adapters/ZeroGMemoryAdapter.ts`)
+### YieldDataAdapter
 
-- Interfaces: `ExecutionMemory`, `ProtocolStats`
-- KV store: protocol success rate, average confidence, and execution count
-- Log store: append-only execution history
-- `storeExecution()`: appends to the log, then updates KV stats with incremental averages
-- `getProtocolStats()`: returns stats or `null` when 0G is unavailable
-- Fail-safe: memory unavailability never changes decisions; RiskAgent traces the fallback
-- Demo mode: injects Morpho low success and Aave/Aave V3 high success without writing to real 0G storage
+**Location**: `backend/src/adapters/YieldDataAdapter.ts`
 
-### ReasoningAdapter (`src/adapters/ReasoningAdapter.ts`)
+**Responsibility**: Fetch yield data from DefiLlama, cache, fallback.
 
-- Optional LLM integration (supports OpenRouter or Groq with free tiers)
-- Priority: OpenRouter > Groq
-- `explainYield()`: generates human-readable yield explanation
-- `evaluateRisk()`: returns `{ reasoning, confidence }` for blending
-- Strict validation: confidence must be finite number, reasoning non-empty
-- Timeout: 2 seconds. On failure: ignored completely.
-- LLM never overrides decisions, never triggers retries
+**Methods**:
 
-## Type System (`src/types/index.ts`)
+```typescript
+async getYieldOptions(asset: string): Promise<YieldOption[]>
+```
 
-All types strict, zero `any`:
+**Features**:
 
-| Type                 | Key Fields                                                                                            |
-| -------------------- | ----------------------------------------------------------------------------------------------------- |
-| `AgentTrace`         | agent, step, message, metadata?, timestamp                                                            |
-| `ExecutionResult`    | protocol, apy, action, status, attempt?, swap?                                                        |
-| `ExecutionSummary`   | selectedProtocol, initialProtocol, finalProtocol, wasRetried, confidence, explanation, decisionImpact |
-| `ExecutionRequest`   | intent, context? (ens, wallet, demo, debug)                                                           |
-| `ExecutionResponse`  | intent, trace, final_result, summary, debug?                                                          |
-| `ENSInfluence`       | tier (strong/neutral/weak), reputationScore, effect                                                   |
-| `AXLInfluence`       | approvalRatio, decisionImpact (boost/penalty/retry/none), isSimulated                                 |
-| `DecisionImpact`     | ens (string), axl (string)                                                                            |
-| `YieldOption`        | protocol, apy, riskLevel?, source?, tvlUsd?, poolId?, chain?                                          |
-| `UniswapQuoteResult` | amountOut, priceImpact, gasEstimate, route, source, lastUpdatedAt?                                    |
-| `ExecutionMemory`    | intent, selectedProtocol, rejectedProtocol?, confidence, outcome, timestamp                           |
-| `ProtocolStats`      | protocol, successRate, avgConfidence, executionCount                                                  |
+- DefiLlama `/pools` endpoint
+- Filter by asset, chain (Ethereum)
+- Mark source: "defillama" (live) or "cache"
+- Return empty array if no data
+
+### UniswapAdapter
+
+**Location**: `backend/src/adapters/UniswapAdapter.ts`
+
+**Responsibility**: Get swap quotes, fallback to CoinGecko.
+
+**Methods**:
+
+```typescript
+async getQuote(params: {
+  tokenIn: string,
+  tokenOut: string,
+  amount: string
+}): Promise<UniswapQuoteResult | null>
+```
+
+**Features**:
+
+- Try Uniswap API if enabled
+- Fallback to CoinGecko pricing
+- Return null if both fail
+- Cache results
+
+### AXLAdapter
+
+**Location**: `backend/src/adapters/AXLAdapter.ts`
+
+**Responsibility**: Broadcast messages to AXL network, collect responses.
+
+**Methods**:
+
+```typescript
+async broadcast(message: AXLMessage): Promise<unknown[]>
+async sendMessage(target: string, payload: any): Promise<any>
+```
+
+**Features**:
+
+- Contact 3 AXL nodes in parallel (localhost:3005, :3006, :3007)
+- ~1500ms timeout per node
+- Validate response shape
+- Return empty array if no valid responses
+
+### ZeroGMemoryAdapter
+
+**Location**: `backend/src/adapters/ZeroGMemoryAdapter.ts`
+
+**Responsibility**: Store/retrieve execution history, compute protocol stats.
+
+**Methods**:
+
+```typescript
+async storeExecution(data: ExecutionMemory): Promise<void>
+async getProtocolStats(protocol: string): Promise<ProtocolStats | null>
+async getRecentExecutions(limit: number): Promise<ExecutionMemory[]>
+```
+
+**Features**:
+
+- In-memory store (default)
+- Optional HTTP backend (0G KV)
+- Demo mode with seeded data
+- Success rate, avg confidence, execution count
+
+### ReasoningAdapter
+
+**Location**: `backend/src/adapters/ReasoningAdapter.ts`
+
+**Responsibility**: Generate natural language explanations via LLM (optional).
+
+**Methods**:
+
+```typescript
+async explainFinalDecision(context: any, intent: string): Promise<string | null>
+isEnabled(): boolean
+```
+
+**Features**:
+
+- OpenRouter (priority) > Groq
+- 5000ms timeout
+- Returns null if disabled/timeout
+- Fallback to template strings
+
+## Type System
+
+**Location**: `backend/src/types/index.ts`
+
+Core types:
+
+- `ExecutionRequest`, `ExecutionResponse`
+- `AgentTrace`, `ExecutionResult`
+- `YieldOption`, `YieldThinkResult`
+- `RiskReviewResult`
+- `ENSReputationContext`, `ENSInfluence`
+- `AXLMessage`, `AXLInfluence`
+- `MemoryInfluence`, `ExecutionSummary`
+
+## Error Handling
+
+**Philosophy**: Fail gracefully, degrade to safe defaults.
+
+| Failure | Behavior |
+|---------|----------|
+| ENS timeout | Use reputation 0.5, continue |
+| Yield data unavailable | Return error response |
+| AXL down | Proceed with local decisions |
+| Memory unavailable | Proceed without history |
+| LLM timeout | Use template explanation |
+| Swap quote failed | Proceed without quote |
 
 ## Testing
 
-129 tests across 14 files using Vitest:
+**Location**: `backend/src/__tests__/`
+
+Test files:
+
+- `setup.ts` – Common fixtures
+- `BaseAgent.test.ts` – Agent logging
+- `YieldAgent.test.ts` – Yield selection logic
+- `RiskAgent.test.ts` – Risk decisions + ENS/AXL influence
+- `ExecutorAgent.test.ts` – Execution + swaps
+- `EdgeCases.test.ts` – Bounds, edge inputs
+- `ExecutionService.test.ts` – End-to-end flows
+- `YieldDataAdapter.test.ts` – Data fetching
+- `AXLAdapter.test.ts` – Peer communication
+- `UniswapAdapter.test.ts` – Swap quotes
+- `ZeroGMemoryAdapter.test.ts` – Memory + retry
+
+**Run**:
 
 ```bash
-cd backend && npm test
+npm run test          # Full suite
+npm run test:watch   # Watch mode
 ```
 
-| Test File                  | Count | Coverage                                               |
-| -------------------------- | ----- | ------------------------------------------------------ |
-| BaseAgent.test.ts          | 5     | Identity, logging, metadata merging                    |
-| YieldAgent.test.ts         | 9     | Live data, selection, retry, asset extraction          |
-| RiskAgent.test.ts          | 12    | ENS tiers, AXL influence, approve/reject               |
-| ExecutorAgent.test.ts      | 9     | Quote data, result fields, confidence, narrative       |
-| ExecutionService.test.ts   | 11    | Full flow, retry, determinism, decisionImpact          |
-| AXLAdapter.test.ts         | 6     | Empty responses, graceful degradation                  |
-| YieldDataAdapter.test.ts   | 4     | Live fetch, caching, no-data behavior                  |
-| EdgeCases.test.ts          | 15    | Boundaries, ENS tiers, confidence bounds               |
-| integration.test.ts        | 1     | Full end-to-end flow                                   |
-| hardening.test.ts          | 15    | Stability, live retry path, low data, validation       |
-| verification.test.ts       | 7     | Verification scenarios, output contract                |
-| UniswapAdapter.test.ts     | 5     | Quote fetch, caching, unknown tokens                   |
-| ZeroGMemoryAdapter.test.ts | 5     | Memory storage, stats, risk influence, fail-safe, demo |
-| audit.test.ts              | 25    | Pipeline, edge cases, determinism, security            |
+## Confidence Calculation
 
-## Graceful Degradation
+Final confidence = average of:
 
-| Failure               | Behavior                                                                                |
-| --------------------- | --------------------------------------------------------------------------------------- |
-| DefiLlama down        | Returns cached upstream data if present; otherwise structured failed execution          |
-| All AXL nodes down    | Empty responses, no confidence change, clean trace                                      |
-| ENS RPC down          | Neutral reputation (0.7), no penalties                                                  |
-| Uniswap unavailable   | Uses CoinGecko spot price quote; if both fail, execution continues without swap quote   |
-| 0G memory unavailable | Returns null stats, emits memory fallback trace, does not alter risk or retry decisions |
-| LLM timeout/error     | Ignored completely, deterministic logic only                                            |
-| Malformed AXL data    | Rejected by type guards, never trusted                                                  |
+1. **Yield Confidence** (0.0–0.95):
+   - Base 0.7 + APY gap/10 + live bonus + retry bonus
+   - Clamped to [0, 0.95]
+
+2. **Risk Confidence** (0.0–0.95):
+   - Base 0.8, adjusted by ENS/AXL/memory
+   - Lower for rejections
+
+3. **Execution Confidence** (0.0–0.95):
+   - Base 0.85 – 0.1*(attempt-1) + low risk bonus + quote bonus
+   - Fixed 0.9 if using prepared quote
+
+Result: (yield + risk + execution) / 3, clamped [0, 0.95]

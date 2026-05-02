@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RelayX Frontend
 
-## Getting Started
+Next.js + React dashboard for analyzing DeFi yield strategies.
 
-First, run the development server:
+## Overview
+
+Provides a user interface for:
+
+- **Submitting yield requests**: "find best yield on ETH"
+- **Monitoring execution**: View agent traces in real-time
+- **Approving & executing**: Review before committing
+- **Viewing history**: Past executions with full audit trail
+
+## Quick Start
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Frontend runs on `http://localhost:3000` and proxies API calls to backend (`http://localhost:3001`).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Architecture
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+app/
+├── page.tsx            # Home: request submission
+├── dashboard/
+│   ├── page.tsx        # Dashboard: trace + results
+│   └── logs/page.tsx   # Logs: session history
+└── ...
 
-## Learn More
+components/
+├── navbar.tsx          # Header
+├── floating-panel.tsx  # Status indicator
+├── theme-toggle.tsx    # Dark mode
+└── ...
 
-To learn more about Next.js, take a look at the following resources:
+lib/
+├── execution.ts        # API normalization + session storage
+└── utils.ts            # Utilities
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## API Integration
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Frontend calls backend via API proxy (set in `next.config.ts`):
 
-## Deploy on Vercel
+```
+Frontend /api/analyze  →  Backend localhost:3001/analyze
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+All requests include full trace and decision metadata.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Features
+
+- **Agent Trace Display**: See each agent's reasoning
+- **Confidence Breakdown**: Yield, risk, execution confidence scores
+- **ENS Influence**: Show ENS reputation impact
+- **Memory Influence**: Show protocol history impact
+- **Dark Mode**: Theme toggle
+- **Session History**: LocalStorage-backed execution log
+
+## Environment
+
+Create `frontend/.env.local`:
+
+```bash
+NEXT_PUBLIC_API_BASE=http://localhost:3001
+```
+
+## Development
+
+```bash
+npm run dev      # Start dev server
+npm run build    # Build for production
+npm run start    # Run production build
+npm run lint     # Check code style (if configured)
+```
+
+## See Also
+
+- [Architecture](../docs/architecture.md) — System design
+- [Frontend Design](../docs/frontend.md) — Components & patterns
+- [API Reference](../docs/api-reference.md) — Endpoint schemas
+- [Development Runbook](../docs/development-runbook.md) — Debugging
+

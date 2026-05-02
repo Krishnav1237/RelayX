@@ -1,152 +1,272 @@
-# RelayX Architecture
+# Architecture & Data Flow
 
-## System Overview
+RelayX follows a **multi-agent orchestration pattern** with deterministic decision logic.
 
-RelayX is an intent-centric DeFi execution engine built on a multi-agent orchestration pattern. A user submits a natural language intent, and three specialized agents collaborate — with real external data from DefiLlama, ENS, AXL, and 0G-backed memory — to find the best yield, assess risk, and execute a deposit.
-
-## Runtime Topology
+## High-Level System Design
 
 ```
-User Browser → Next.js Frontend (:3000)
-                  ↓ POST /api/execute (rewritten to backend)
-              Express Backend (:3001)
-                  ↓
-              ExecutionService
-                  ├── DefiLlama API (live yield data)
-                  ├── ENS Resolution (Ethereum mainnet via viem)
-                  ├── Uniswap API / CoinGecko API (quote data)
-                  ├── 0G Storage KV + Log (execution memory)
-                  ├── YieldAgent → AXL broadcast (yield_request)
-                  ├── RiskAgent → AXL broadcast (risk_request)
-                  ├── [Retry path if rejected]
-                  ├── ExecutorAgent → AXL broadcast (execution_signal)
-                  └── Optional LLM (OpenRouter/Groq) for reasoning
-                  ↓
-              JSON Response (trace + result + summary + debug)
+┌─────────────────────────────────────────────────────────────────┐
+│                      Frontend (Next.js)                         │
+│  Dashboard → /api/analyze → User Review → /api/execute/confirm  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Backend API (Express, Port 3001)                   │
+├─────────────────────────────────────────────────────────────────┤
+│  POST /analyze      – analyze intent + get approval            │
+│  POST /execute      – analyze + execute in one call            │
+│  POST /execute/confirm – execute after user approval           │
+│  GET /health        – basic health check                       │
+│  GET /axl-health    – AXL network status                       │
+│  GET /yield-health  – DefiLlama availability                   │
+│  GET /ens-health    – ENS resolution capability                │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+           ┌───────────────┼───────────────┐
+           ▼               ▼               ▼
+    ┌────────────┐ ┌────────────┐ ┌────────────┐
+    │ExecutionSvc│ │Memory Store│ │AXL Network │
+    │(Orchestrator)        │            │
+    └────────────┘ └────────────┘ └────────────┘
+           │
+     ┌─────┴─────┬─────────────┬──────────────┐
+     ▼           ▼             ▼              ▼
+ ┌────────┐ ┌────────┐ ┌────────────┐ ┌──────────┐
+ │ Yield  │ │ Risk   │ │  Executor  │ │  System  │
+ │ Agent  │ │ Agent  │ │   Agent    │ │  Agent   │
+ └────────┘ └────────┘ └────────────┘ └──────────┘
+     │           │             │
+     └───────────┼─────────────┘
+                 ▼
+          ┌─────────────────────────┐
+          │      Adapters           │
+          ├─────────────────────────┤
+          │ ├─ ENSAdapter (Viem)   │
+          │ ├─ YieldDataAdapter    │
+          │ ├─ UniswapAdapter      │
+          │ ├─ AXLAdapter          │
+          │ ├─ ZeroGMemoryAdapter  │
+          │ └─ ReasoningAdapter    │
+          └─────────────────────────┘
+                 │
+      ┌──────────┼──────────┬──────────┐
+      ▼          ▼          ▼          ▼
+  DefiLlama   Ethereum   Uniswap    AXL Nodes
+   (Yield)      (ENS)   (Quotes)  (Consensus)
 ```
 
-## Orchestration Sequence
+## Execution Lifecycle
+
+### Request → Analysis → Approval → Execution
 
 ```
- 1. [system.relay.eth]    Resolve ENS sources → compute reputation score
- 2. [system.relay.eth]    Start: "Processing intent — ENS reputation: 0.93"
- 3. [yield.relay.eth]     Fetch live yield data from DefiLlama (N protocols)
- 4. [yield.relay.eth]     Broadcast yield_request to AXL, merge peer options
- 5. [yield.relay.eth]     Select highest APY protocol
- 6. [risk.relay.eth]      Review selection — ENS tier + AXL consensus + memory
- 7. [risk.relay.eth]      AXL consensus: X/Y approved → confidence adjustment
- 8. [risk.relay.eth]      0G memory: protocol success rate → confidence/risk adjustment
- 9. [risk.relay.eth]      Decision: approve or reject
-10. [system.relay.eth]    (If rejected) Retry with next-best or memory-preferred protocol
-11. [yield.relay.eth]     (Retry) Select alternative protocol
-12. [risk.relay.eth]      (Retry) Review alternative — approve
-13. [system.relay.eth]    Final plan selected
-14. [executor.relay.eth]  Execute deposit, broadcast to AXL
-15. [system.relay.eth]    Store execution memory in 0G KV + Log
-16. [system.relay.eth]    Execution completed
+User Request: "find best yield on ETH"
+      │
+      ▼
+   /analyze endpoint
+      │
+      ├─ Step 1: Build ENS context
+      │  └─ Resolve vitalik.eth, ens.eth, nick.eth
+      │  └─ Compute reputation score (0.0–1.0)
+      │
+      ├─ Step 2: YieldAgent.think()
+      │  └─ Fetch live yield data (DefiLlama)
+      │  └─ Broadcast yield request via AXL
+      │  └─ Merge local + remote options
+      │  └─ Select highest APY by default (attempt 1)
+      │
+      ├─ Step 3: RiskAgent.review()
+      │  └─ Check risk profile
+      │  └─ Apply ENS reputation signals
+      │  └─ Broadcast risk_request via AXL
+      │  └─ Decision: approve/reject
+      │
+      ├─ Step 4 (if rejected): Retry
+      │  └─ YieldAgent selects next option
+      │  └─ Memory-aware retry selection (prefer high success rate)
+      │  └─ RiskAgent reviews second option
+      │
+      ├─ Step 5: ExecutorAgent.quote()
+      │  └─ Fetch swap quote (Uniswap or CoinGecko)
+      │
+      └─ Response: {approval_id, trace[], status: "pending_approval"}
+                   (User must confirm with approval_id)
+
+/execute/confirm endpoint
+      │
+      ├─ Step 6: Retrieve approved plan
+      │  └─ Look up pending execution by approval_id
+      │
+      ├─ Step 7: ExecutorAgent.execute()
+      │  └─ Execute deposit on selected protocol
+      │  └─ Broadcast execution_signal via AXL
+      │
+      ├─ Step 8: Persist memory
+      │  └─ Store execution outcome for protocol
+      │  └─ Update success rates
+      │
+      └─ Response: {final_result, trace[], status: "success"}
 ```
 
-## Decision Model
+## Component Responsibilities
 
-### Data Sources
+### Agents
 
-| Source          | What It Provides                            | Fallback                                         |
-| --------------- | ------------------------------------------- | ------------------------------------------------ |
-| DefiLlama       | Live APY data for DeFi protocols            | Cached upstream data; otherwise failed execution |
-| ENS             | On-chain reputation (address, text records) | Neutral score (0.7)                              |
-| Uniswap         | Authenticated route quote                   | CoinGecko spot price quote                       |
-| CoinGecko       | Spot prices for quote fallback              | No swap quote attached                           |
-| AXL             | Peer consensus (approve/reject ratios)      | Empty responses (no influence)                   |
-| 0G Storage      | Protocol success stats + execution history  | Null stats (no influence)                        |
-| OpenRouter/Groq | LLM reasoning + confidence adjustment       | Ignored entirely                                 |
+| Agent | Role | Output |
+|-------|------|--------|
+| **YieldAgent** | Analyze intent, fetch yield data, select by APY | {options[], selectedOption, reasoning, confidence} |
+| **RiskAgent** | Assess risk vs APY, apply ENS/AXL/memory signals | {decision: approve\|reject, riskScore, reasoning} |
+| **ExecutorAgent** | Quote swap, execute deposit | {result, swap quote, confidence} |
+| **System Agent** | Log orchestration steps, manage approvals | Trace entries |
 
-### YieldAgent Selection
+### Adapters
 
-- Fetches live data from DefiLlama, filtered by asset, Ethereum chain, $1M+ TVL
-- Merges AXL peer suggestions (local data takes priority for duplicates)
-- Attempt 1: highest APY. Attempt 2: next-best.
-- If no live or cached upstream data exists, the service returns a structured failed execution rather than synthetic options
+| Adapter | Responsibility | Failure Mode |
+|---------|-----------------|--------------|
+| **ENSAdapter** | Resolve ENS names, fetch text records | Return null, use neutral 0.5 score |
+| **YieldDataAdapter** | Fetch DefiLlama data, cache | Use cached data, fallback to empty |
+| **UniswapAdapter** | Quote swaps, fallback to CoinGecko | Fall back to CoinGecko, then null |
+| **AXLAdapter** | Broadcast to peers, validate responses | Silently return empty array |
+| **ZeroGMemoryAdapter** | Store/retrieve execution history | Optional, continue without history |
+| **ReasoningAdapter** | Generate LLM explanations | Optional, fallback to templates |
 
-### RiskAgent Evaluation
+## Data Structures
 
-Four inputs determine the decision:
+### ExecutionRequest
 
-**1. Local risk scoring:**
+```typescript
+{
+  intent: string;
+  context?: {
+    ens?: string;              // e.g., "vitalik.eth"
+    wallet?: string;           // e.g., "0x..."
+    demo?: boolean;            // Use demo memory
+    debug?: boolean;           // Log debug info
+  };
+}
+```
 
-- High risk → always reject (+60 riskScore)
-- Medium risk + APY ≥ threshold → reject (+40)
-- Medium risk near threshold → extra scrutiny (+15)
-- Medium risk below threshold → approve (+20)
-- Low risk → approve (0)
+### ExecutionResponse
 
-**2. ENS reputation tiers:**
+```typescript
+{
+  intent: string;
+  trace: AgentTrace[];         // Full execution trace
+  final_result: {
+    protocol: string;
+    apy: string;              // e.g., "4.2%"
+    action: "deposit";
+    status: "pending_approval" | "success" | "failed";
+    attempt: number;
+    swap?: UniswapQuoteResult;
+  };
+  summary: {
+    selectedProtocol: string;
+    initialProtocol: string;
+    finalProtocol: string;
+    wasRetried: boolean;
+    totalSteps: number;
+    confidence: number;       // 0.0–0.95
+    explanation: string;
+    decisionImpact: {
+      ens: string;            // ENS impact description
+      axl: string;            // AXL impact description
+      memory?: string;        // Memory impact description
+    };
+  };
+  approval?: {
+    id: string;
+    expiresAt: number;        // Unix ms, TTL 5 min
+  };
+  debug?: {...};              // Only if context.debug=true
+}
+```
 
-| Tier    | Score   | Effect                                    |
-| ------- | ------- | ----------------------------------------- |
-| Strong  | ≥ 0.9   | +0.1 confidence, threshold raised to 4.55 |
-| Neutral | 0.7–0.9 | No change, threshold 4.5                  |
-| Weak    | < 0.7   | -0.1 confidence, threshold lowered to 4.4 |
+### AgentTrace
 
-**3. AXL peer consensus:**
+```typescript
+{
+  agent: string;              // e.g., "yield.relay.eth"
+  step: string;               // e.g., "analyze", "evaluate", "approve"
+  message: string;
+  metadata?: {
+    [key: string]: unknown;
+  };
+  timestamp: number;          // Unix ms
+}
+```
 
-| Approval Ratio | Effect                                       |
-| -------------- | -------------------------------------------- |
-| ≥ 70%          | +0.1 confidence (boost)                      |
-| < 30%          | -0.1 confidence (penalty), can trigger retry |
-| Mixed / None   | No change                                    |
+## Decision Logic
 
-**4. 0G protocol memory:**
+### RiskAgent Thresholds
 
-| Historical Success Rate | Effect                                       |
-| ----------------------- | -------------------------------------------- |
-| > 90%                   | +0.05 confidence                             |
-| < 60%                   | -0.05 confidence and +10 riskScore           |
-| Unavailable / no stats  | No decision influence; trace shows fail-safe |
+```
+APY  │  Risk Level  │  Approval Logic
+─────┼──────────────┼────────────────────────────────
+≤4.0 │  low         │  Always approve
+4.0-4.5 │ low      │  Always approve
+4.5+ │  low         │  Always approve
+─────┼──────────────┼────────────────────────────────
+≤4.0 │  medium      │  Approve
+4.0-4.5 │ medium   │  Approve
+4.5+ │  medium      │  REJECT (unless strong ENS)
+─────┼──────────────┼────────────────────────────────
+*    │  high        │  REJECT
+```
 
-Memory also informs retry selection by preferring the available alternative with the highest success rate, then highest average confidence.
+### ENS Influence
 
-**5. Optional LLM blending:**
+- **Reputation Score ≥ 0.9**: "strong" tier → allow medium risk up to 4.6% APY
+- **0.7 ≤ Score < 0.9**: "neutral" tier → standard thresholds
+- **Score < 0.7**: "weak" tier → stricter APY limits
 
-- `finalConfidence = deterministic * 0.7 + llmConfidence * 0.3`
-- LLM never overrides decisions or triggers retries
+### AXL Consensus Impact
 
-Final decision: `riskScore >= 35` → reject.
+- **Approval Ratio ≥ 0.7**: Boost confidence
+- **Approval Ratio < 0.3**: Penalty, trigger retry
+- **Otherwise**: No direct impact (neutral)
 
-### Retry Logic
+### Memory Influence
 
-- Triggered by: risk rejection OR AXL penalty
-- Maximum 1 retry (2 attempts total)
-- Retry always excludes the rejected protocol
-- If 0G memory has stats for alternatives, retry prefers higher successRate and avgConfidence
-- Demo mode injects memory where Morpho has low historical success and Aave/Aave V3 has high historical success
+- **Success Rate ≥ 0.7**: Boosted confidence
+- **Success Rate < 0.5**: Penalized, preferred in retry
+- **No history**: Neutral (default)
 
-## Trace-Centric Design
+## Retry Strategy
 
-Every stage appends an `AgentTrace` entry with:
+On rejection (or AXL penalty), the system retries:
 
-- `agent`: ENS-style identity (e.g., `yield.relay.eth`)
-- `step`: stage label (`analyze`, `evaluate`, `review`, `retry`, `execute`)
-- `message`: human-readable explanation
-- `metadata`: structured diagnostic payload (ENS influence, AXL influence, memory influence, confidence)
-- `timestamp`: strictly increasing synthetic timeline
+1. **YieldAgent** selects next option (by attempt number, not just APY)
+2. **Memory-aware selection**: If memory available, prefer highest success rate
+3. **RiskAgent** reviews second option
+4. **Max attempts**: 2
 
-Before returning, the system validates:
+If retry also fails → return rejection reason in summary.
 
-- All 4 agents appear in trace
-- Timestamps are strictly increasing
-- Output contract is valid (protocol, APY, status, explanation, decisionImpact)
+## Timeout & Fallback Strategy
 
-## Data Contracts
+| Component | Timeout | Fallback |
+|-----------|---------|----------|
+| ENS resolution | 4000 ms | null address, neutral score 0.5 |
+| ENS text records | 4000 ms | empty object {} |
+| Yield data fetch | — | cache or empty [] |
+| AXL broadcast | ~1500ms per node | empty array [] |
+| Uniswap quote | — | CoinGecko or null |
+| LLM explanation | 5000 ms | template string |
 
-| Type                | Purpose                                                             |
-| ------------------- | ------------------------------------------------------------------- |
-| `ExecutionRequest`  | Intent + optional context (ens, wallet, demo, debug)                |
-| `ExecutionResponse` | Full response: trace, result, summary, debug                        |
-| `AgentTrace`        | Single trace entry                                                  |
-| `ExecutionSummary`  | Human-readable summary with decisionImpact                          |
-| `ENSInfluence`      | Tier, score, effect on risk tolerance                               |
-| `AXLInfluence`      | Approval ratio, decision impact, simulation flag from peer metadata |
-| `DecisionImpact`    | One-line ENS + AXL impact descriptions                              |
-| `YieldOption`       | Protocol, APY, risk level                                           |
-| `ExecutionMemory`   | Append-only 0G log entry for an execution                           |
-| `ProtocolStats`     | 0G KV aggregate stats used by RiskAgent and retry selection         |
+## Caching Strategy
+
+| Component | TTL | Key |
+|-----------|-----|-----|
+| ENS names + records | 5 min | {name} |
+| Yield options | varies | {asset} |
+| Swap quotes | varies | {tokenIn}→{tokenOut} |
+| Protocol stats | in-memory | {protocol} |
+
+## Security & Determinism
+
+- **No randomness**: Same input always yields same decision path
+- **Overflow protection**: Confidence values clamped to [0, 0.95]
+- **No magic numbers**: All thresholds configurable via code
+- **Trace for audit**: Every decision logged with reasoning + metadata
