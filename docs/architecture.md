@@ -2,7 +2,7 @@
 
 ## System Overview
 
-RelayX is an intent-centric DeFi execution engine built on a multi-agent orchestration pattern. A user submits a natural language intent, and three specialized agents collaborate — with real external data from DefiLlama, ENS, and AXL — to find the best yield, assess risk, and execute a deposit.
+RelayX is an intent-centric DeFi execution engine built on a multi-agent orchestration pattern. A user submits a natural language intent, and three specialized agents collaborate — with real external data from DefiLlama, ENS, AXL, and 0G-backed memory — to find the best yield, assess risk, and execute a deposit.
 
 ## Runtime Topology
 
@@ -14,6 +14,8 @@ User Browser → Next.js Frontend (:3000)
               ExecutionService
                   ├── DefiLlama API (live yield data)
                   ├── ENS Resolution (Ethereum mainnet via viem)
+                  ├── Uniswap API / CoinGecko API (quote data)
+                  ├── 0G Storage KV + Log (execution memory)
                   ├── YieldAgent → AXL broadcast (yield_request)
                   ├── RiskAgent → AXL broadcast (risk_request)
                   ├── [Retry path if rejected]
@@ -31,15 +33,17 @@ User Browser → Next.js Frontend (:3000)
  3. [yield.relay.eth]     Fetch live yield data from DefiLlama (N protocols)
  4. [yield.relay.eth]     Broadcast yield_request to AXL, merge peer options
  5. [yield.relay.eth]     Select highest APY protocol
- 6. [risk.relay.eth]      Review selection — ENS tier + AXL consensus
+ 6. [risk.relay.eth]      Review selection — ENS tier + AXL consensus + memory
  7. [risk.relay.eth]      AXL consensus: X/Y approved → confidence adjustment
- 8. [risk.relay.eth]      Decision: approve or reject
- 9. [system.relay.eth]    (If rejected) Retry with next-best protocol
-10. [yield.relay.eth]     (Retry) Select alternative protocol
-11. [risk.relay.eth]      (Retry) Review alternative — approve
-12. [system.relay.eth]    Final plan selected
-13. [executor.relay.eth]  Execute deposit, broadcast to AXL
-14. [system.relay.eth]    Execution completed
+ 8. [risk.relay.eth]      0G memory: protocol success rate → confidence/risk adjustment
+ 9. [risk.relay.eth]      Decision: approve or reject
+10. [system.relay.eth]    (If rejected) Retry with next-best or memory-preferred protocol
+11. [yield.relay.eth]     (Retry) Select alternative protocol
+12. [risk.relay.eth]      (Retry) Review alternative — approve
+13. [system.relay.eth]    Final plan selected
+14. [executor.relay.eth]  Execute deposit, broadcast to AXL
+15. [system.relay.eth]    Store execution memory in 0G KV + Log
+16. [system.relay.eth]    Execution completed
 ```
 
 ## Decision Model
@@ -48,20 +52,23 @@ User Browser → Next.js Frontend (:3000)
 
 | Source | What It Provides | Fallback |
 |---|---|---|
-| DefiLlama | Live APY data for DeFi protocols | Cached data, then Aave+Compound fallback |
+| DefiLlama | Live APY data for DeFi protocols | Cached upstream data; otherwise failed execution |
 | ENS | On-chain reputation (address, text records) | Neutral score (0.7) |
+| Uniswap | Authenticated route quote | CoinGecko spot price quote |
+| CoinGecko | Spot prices for quote fallback | No swap quote attached |
 | AXL | Peer consensus (approve/reject ratios) | Empty responses (no influence) |
+| 0G Storage | Protocol success stats + execution history | Null stats (no influence) |
 | OpenAI | LLM reasoning + confidence adjustment | Ignored entirely |
 
 ### YieldAgent Selection
 - Fetches live data from DefiLlama, filtered by asset, Ethereum chain, $1M+ TVL
 - Merges AXL peer suggestions (local data takes priority for duplicates)
 - Attempt 1: highest APY. Attempt 2: next-best.
-- Demo mode ensures Morpho (medium) + Aave (low) + Compound (low) are available
+- If no live or cached upstream data exists, the service returns a structured failed execution rather than synthetic options
 
 ### RiskAgent Evaluation
 
-Three inputs determine the decision:
+Four inputs determine the decision:
 
 **1. Local risk scoring:**
 - High risk → always reject (+60 riskScore)
@@ -86,7 +93,17 @@ Three inputs determine the decision:
 | < 30% | -0.1 confidence (penalty), can trigger retry |
 | Mixed / None | No change |
 
-**4. Optional LLM blending:**
+**4. 0G protocol memory:**
+
+| Historical Success Rate | Effect |
+|---|---|
+| > 90% | +0.05 confidence |
+| < 60% | -0.05 confidence and +10 riskScore |
+| Unavailable / no stats | No decision influence; trace shows fail-safe |
+
+Memory also informs retry selection by preferring the available alternative with the highest success rate, then highest average confidence.
+
+**5. Optional LLM blending:**
 - `finalConfidence = deterministic * 0.7 + llmConfidence * 0.3`
 - LLM never overrides decisions or triggers retries
 
@@ -95,8 +112,9 @@ Final decision: `riskScore >= 35` → reject.
 ### Retry Logic
 - Triggered by: risk rejection OR AXL penalty
 - Maximum 1 retry (2 attempts total)
-- Retry always selects a different protocol (attempt-based index)
-- Demo mode guarantees: Morpho rejected → Aave approved
+- Retry always excludes the rejected protocol
+- If 0G memory has stats for alternatives, retry prefers higher successRate and avgConfidence
+- Demo mode injects memory where Morpho has low historical success and Aave/Aave V3 has high historical success
 
 ## Trace-Centric Design
 
@@ -104,7 +122,7 @@ Every stage appends an `AgentTrace` entry with:
 - `agent`: ENS-style identity (e.g., `yield.relay.eth`)
 - `step`: stage label (`analyze`, `evaluate`, `review`, `retry`, `execute`)
 - `message`: human-readable explanation
-- `metadata`: structured diagnostic payload (ENS influence, AXL influence, confidence)
+- `metadata`: structured diagnostic payload (ENS influence, AXL influence, memory influence, confidence)
 - `timestamp`: strictly increasing synthetic timeline
 
 Before returning, the system validates:
@@ -121,6 +139,8 @@ Before returning, the system validates:
 | `AgentTrace` | Single trace entry |
 | `ExecutionSummary` | Human-readable summary with decisionImpact |
 | `ENSInfluence` | Tier, score, effect on risk tolerance |
-| `AXLInfluence` | Approval ratio, decision impact, simulated flag |
+| `AXLInfluence` | Approval ratio, decision impact, simulation flag from peer metadata |
 | `DecisionImpact` | One-line ENS + AXL impact descriptions |
 | `YieldOption` | Protocol, APY, risk level |
+| `ExecutionMemory` | Append-only 0G log entry for an execution |
+| `ProtocolStats` | 0G KV aggregate stats used by RiskAgent and retry selection |

@@ -1,8 +1,9 @@
 import { YieldOption } from '../types';
 
 const DEFILLAMA_URL = 'https://yields.llama.fi/pools';
-const FETCH_TIMEOUT_MS = 5000;
-const CACHE_TTL_MS = 60_000;
+const FETCH_TIMEOUT_MS = 8000;
+const FRESH_CACHE_TTL_MS = 60_000;
+const STALE_CACHE_TTL_MS = 10 * 60_000;
 
 const PROTOCOL_RISK_MAP: Record<string, YieldOption['riskLevel']> = {
   'aave': 'low',
@@ -22,10 +23,15 @@ const PROTOCOL_RISK_MAP: Record<string, YieldOption['riskLevel']> = {
   'curve-dex': 'medium',
 };
 
-const FALLBACK_OPTIONS: YieldOption[] = [
-  { protocol: 'Aave', apy: 4.2, riskLevel: 'low' },
-  { protocol: 'Compound', apy: 3.8, riskLevel: 'low' },
-];
+const ASSET_SYNONYMS: Record<string, readonly string[]> = {
+  ETH: ['ETH', 'WETH'],
+  WETH: ['WETH', 'ETH'],
+  USDC: ['USDC'],
+  USDT: ['USDT'],
+  DAI: ['DAI'],
+  WBTC: ['WBTC', 'BTC'],
+  STETH: ['STETH', 'WSTETH'],
+};
 
 interface CacheEntry {
   options: YieldOption[];
@@ -41,11 +47,11 @@ export class YieldDataAdapter {
 
   async getYieldOptions(asset: string): Promise<YieldOption[]> {
     const key = asset.trim().toUpperCase();
+    if (!key) return [];
 
-    // Check cache
     const cached = this.cache.get(key);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      return cached.options;
+    if (cached && Date.now() - cached.timestamp < FRESH_CACHE_TTL_MS) {
+      return this.withSource(cached.options, 'cache');
     }
 
     try {
@@ -58,9 +64,11 @@ export class YieldDataAdapter {
       console.error('[YieldDataAdapter] DefiLlama fetch failed:', error instanceof Error ? error.message : error);
     }
 
-    // Return cached if available, otherwise fallback
-    if (cached) return cached.options;
-    return [...FALLBACK_OPTIONS];
+    if (cached && Date.now() - cached.timestamp < STALE_CACHE_TTL_MS) {
+      return this.withSource(cached.options, 'cache');
+    }
+
+    return [];
   }
 
   private async fetchFromDefiLlama(asset: string): Promise<YieldOption[]> {
@@ -82,19 +90,19 @@ export class YieldDataAdapter {
 
   private parseDefiLlamaPools(pools: unknown[], asset: string): YieldOption[] {
     const seen = new Map<string, YieldOption>();
-    const assetUpper = asset.toUpperCase();
 
     for (const pool of pools) {
       if (!isRecord(pool)) continue;
 
-      const symbol = typeof pool.symbol === 'string' ? pool.symbol.toUpperCase() : '';
+      const symbol = typeof pool.symbol === 'string' ? pool.symbol : '';
       const chain = typeof pool.chain === 'string' ? pool.chain : '';
       const project = typeof pool.project === 'string' ? pool.project : '';
       const apy = typeof pool.apy === 'number' ? pool.apy : 0;
       const tvlUsd = typeof pool.tvlUsd === 'number' ? pool.tvlUsd : 0;
+      const poolId = typeof pool.pool === 'string' ? pool.pool : undefined;
 
-      // Filter: must contain the asset, be on Ethereum, have meaningful TVL
-      if (!symbol.includes(assetUpper)) continue;
+      if (!project.trim()) continue;
+      if (!this.symbolMatchesAsset(symbol, asset)) continue;
       if (chain !== 'Ethereum') continue;
       if (tvlUsd < 1_000_000) continue;
       if (apy <= 0 || apy > 50) continue;
@@ -103,21 +111,38 @@ export class YieldDataAdapter {
       const riskLevel = PROTOCOL_RISK_MAP[protocolKey] ?? 'medium';
       const protocolName = this.formatProtocolName(project);
 
-      // Keep highest APY per protocol
       const existing = seen.get(protocolKey);
       if (!existing || apy > existing.apy) {
         seen.set(protocolKey, {
           protocol: protocolName,
           apy: Math.round(apy * 100) / 100,
           riskLevel,
+          chain,
+          poolId,
+          source: 'defillama',
+          tvlUsd: Math.round(tvlUsd),
         });
       }
     }
 
-    // Sort by APY descending, take top 5
     return [...seen.values()]
       .sort((a, b) => b.apy - a.apy)
       .slice(0, 5);
+  }
+
+  private symbolMatchesAsset(symbol: string, asset: string): boolean {
+    const assetUpper = asset.toUpperCase();
+    const acceptedSymbols = ASSET_SYNONYMS[assetUpper] ?? [assetUpper];
+    const symbolParts = symbol
+      .toUpperCase()
+      .split(/[^A-Z0-9]+/)
+      .filter(part => part.length > 0);
+
+    return acceptedSymbols.some(accepted => symbolParts.includes(accepted));
+  }
+
+  private withSource(options: YieldOption[], source: 'cache'): YieldOption[] {
+    return options.map(option => ({ ...option, source }));
   }
 
   private formatProtocolName(raw: string): string {

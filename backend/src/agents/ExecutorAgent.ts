@@ -51,15 +51,15 @@ export class ExecutorAgent extends BaseAgent {
     }
 
     if (swapQuote) {
-      const sourceLabel = swapQuote.source === 'live' ? 'live' : 'mock';
       trace.push(this.log('quote',
-        `Uniswap route found (${sourceLabel}): estimated ${swapQuote.amountOut} ${tokenPair.tokenOut} output (price impact ${swapQuote.priceImpact}%)`,
+        `Swap route found via ${swapQuote.source}: estimated ${swapQuote.amountOut} ${tokenPair.tokenOut} output (price impact ${swapQuote.priceImpact}%)`,
         {
           amountOut: swapQuote.amountOut,
           priceImpact: swapQuote.priceImpact,
           gasEstimate: swapQuote.gasEstimate,
           route: swapQuote.route,
           source: swapQuote.source,
+          lastUpdatedAt: swapQuote.lastUpdatedAt,
         },
         ts, externalMetadata));
       ts += 10;

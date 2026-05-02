@@ -14,7 +14,7 @@ describe('YieldAgent', () => {
     const trace: AgentTrace[] = [];
     const result = await agent.think('get best yield on ETH', 1, trace, 1000);
 
-    // Should select the highest APY option (whatever it is from live/fallback data)
+    // Should select the highest APY option from upstream yield data.
     expect(result.selectedOption).toBeDefined();
     expect(result.selectedOption.apy).toBeGreaterThan(0);
     expect(result.attempt).toBe(1);

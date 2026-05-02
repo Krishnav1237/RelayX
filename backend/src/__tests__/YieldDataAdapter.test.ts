@@ -18,6 +18,8 @@ describe('YieldDataAdapter', () => {
       expect(typeof opt.apy).toBe('number');
       expect(opt.apy).toBeGreaterThan(0);
       expect(['low', 'medium', 'high', undefined]).toContain(opt.riskLevel);
+      expect(['defillama', 'cache']).toContain(opt.source);
+      expect(typeof opt.tvlUsd).toBe('number');
     }
   });
 
@@ -34,10 +36,9 @@ describe('YieldDataAdapter', () => {
     expect(second).toBeLessThan(first + 50);
   });
 
-  it('should return fallback options on invalid asset', async () => {
+  it('should return no options on invalid asset', async () => {
     const options = await adapter.getYieldOptions('ZZZZNOTREAL');
     expect(Array.isArray(options)).toBe(true);
-    // Should at least return fallback
-    expect(options.length).toBeGreaterThanOrEqual(2);
+    expect(options.length).toBe(0);
   });
 });

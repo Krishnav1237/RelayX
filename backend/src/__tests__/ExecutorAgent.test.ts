@@ -30,13 +30,13 @@ describe('ExecutorAgent', () => {
 
     const { result } = await agent.execute(plan, trace, 1, 1000);
 
-    // Should have swap data (live or mock)
+    // Should have swap data from an upstream quote source
     expect(result.swap).toBeDefined();
     expect(result.swap!.amountOut.length).toBeGreaterThan(0);
     expect(typeof result.swap!.priceImpact).toBe('number');
     expect(result.swap!.gasEstimate.length).toBeGreaterThan(0);
     expect(result.swap!.route.length).toBeGreaterThan(0);
-    expect(['live', 'mock']).toContain(result.swap!.source);
+    expect(['uniswap', 'coingecko', 'cache']).toContain(result.swap!.source);
   });
 
   it('should include Uniswap trace entries', async () => {

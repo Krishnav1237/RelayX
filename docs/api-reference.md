@@ -22,11 +22,11 @@ Pings all 3 AXL nodes in parallel.
 Tests DefiLlama yield data fetch.
 
 ```json
-{ "status": "ok", "source": "live", "protocols": 5 }
+{ "status": "ok", "source": "defillama", "protocols": 5 }
 ```
 or
 ```json
-{ "status": "fallback", "source": "cache", "protocols": 2 }
+{ "status": "unavailable", "source": "none", "protocols": 0 }
 ```
 
 ### GET /ens-health
@@ -53,7 +53,7 @@ Main orchestration endpoint.
   "context": {
     "ens": "vitalik.eth",
     "wallet": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-    "demo": true,
+    "demo": false,
     "debug": false
   }
 }
@@ -64,7 +64,7 @@ Main orchestration endpoint.
 | `intent` | Yes | Non-empty string describing the user's goal |
 | `context.ens` | No | ENS name for reputation lookup |
 | `context.wallet` | No | Wallet address for reverse ENS lookup |
-| `context.demo` | No | Ensures stable retry path (Morpho→Aave) |
+| `context.demo` | No | Uses seeded memory (Morpho low success, Aave high success) without writing to real 0G |
 | `context.debug` | No | Runs determinism check (logs consistency) |
 
 ### Response
@@ -83,8 +83,8 @@ Main orchestration endpoint.
     {
       "agent": "yield.relay.eth",
       "step": "analyze",
-      "message": "Fetched live yield data (5 protocols)",
-      "metadata": { "asset": "ETH", "isLiveData": true },
+      "message": "Fetched DefiLlama live yield data (5 protocols)",
+      "metadata": { "asset": "ETH", "isLiveData": true, "protocols": [] },
       "timestamp": 1710000000010
     },
     {
@@ -102,6 +102,13 @@ Main orchestration endpoint.
       "timestamp": 1710000000070
     },
     {
+      "agent": "risk.relay.eth",
+      "step": "review",
+      "message": "Memory: Morpho has 42% success rate across 24 executions → decreasing confidence and adding risk",
+      "metadata": { "successRate": 0.42, "executionCount": 24, "avgConfidence": 0.55, "influence": "negative" },
+      "timestamp": 1710000000080
+    },
+    {
       "agent": "system.relay.eth",
       "step": "retry",
       "message": "Retrying: Rejected Morpho due to medium risk...",
@@ -112,6 +119,13 @@ Main orchestration endpoint.
       "step": "execute",
       "message": "Deposit successful. Funds now generating yield at 4.2% APY.",
       "timestamp": 1710000000150
+    },
+    {
+      "agent": "system.relay.eth",
+      "step": "memory",
+      "message": "Memory stored execution outcome for Aave",
+      "metadata": { "selectedProtocol": "Aave", "rejectedProtocol": "Morpho", "confidence": 0.82, "outcome": "success" },
+      "timestamp": 1710000000160
     }
   ],
   "final_result": {
@@ -147,6 +161,8 @@ Main orchestration endpoint.
   }
 }
 ```
+
+When no live or cached yield data is available, the endpoint still returns a valid response with `final_result.status = "failed"`, `protocol = "unavailable"`, and a summary explaining that no real yield data could be selected.
 
 ### Error Responses
 
