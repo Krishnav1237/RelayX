@@ -9,7 +9,6 @@ dist/
 
 # Environment
 .env
-.env.*
 
 # TypeScript
 *.tsbuildinfo
