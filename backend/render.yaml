@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: relayx-backend
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: node dist/index.js
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: RELAYX_CHAIN
+        value: sepolia
+      - key: ALCHEMY_MAINNET_RPC_URL
+        sync: false
+      - key: ALCHEMY_SEPOLIA_RPC_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
