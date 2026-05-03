@@ -58,7 +58,7 @@ export class ExecutorAgent extends BaseAgent {
       const quoteParams = {
         tokenIn: tokenPair.tokenIn,
         tokenOut: tokenPair.tokenOut,
-        amount: '1000000000000000000', // 1 ETH in wei
+        amount: '10000000000000000', // 0.01 ETH in wei (very small for testing)
         chainId: getQuoteChainId(),
       };
       swapQuote = await this.uniswapAdapter.getQuote(quoteParams);

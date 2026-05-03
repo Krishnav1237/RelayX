@@ -16,7 +16,7 @@
 
 import { createPublicClient, http, parseUnits, formatUnits } from 'viem';
 import { mainnet, sepolia } from 'viem/chains';
-import type { UniswapQuoteResult, SwapCalldata } from '../types';
+import type { UniswapQuoteResult, SwapCalldata } from '../types/index.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -183,10 +183,10 @@ export class UniswapAdapter {
     const decimalsIn = this.getTokenDecimals(params.tokenIn);
     const amountIn = BigInt(params.amount);
 
-    // Try each fee tier, return first successful quote
-    for (const fee of FEE_TIERS) {
+    // Try each fee tier in parallel, return the best successful quote
+    const quotePromises = FEE_TIERS.map(async (fee) => {
       try {
-        const rawResult = await this.viemClient.readContract({
+        const rawResult = await this.viemClient!.readContract({
           address: quoterAddress,
           abi: QUOTER_V2_ABI,
           functionName: 'quoteExactInputSingle',
@@ -209,35 +209,39 @@ export class UniswapAdapter {
           const amountOutFormatted = formatUnits(amountOut, decimalsOut);
           const amountInFormatted = formatUnits(amountIn, decimalsIn);
           const rate = Number(amountOutFormatted) / Number(amountInFormatted);
-
-          // priceImpact: simplified estimate, always bounded 0–99
           const priceImpact = Math.max(0, Math.min(99, 0.1));
-
           const tokenInSym = params.tokenIn.toUpperCase().replace('WETH', 'ETH');
           const tokenOutSym = params.tokenOut.toUpperCase();
           const feePct = fee / 10000;
 
-          console.log(
-            `[UniswapAdapter] QuoterV2 quote: ${amountInFormatted} ${tokenInSym} → ${amountOutFormatted} ${tokenOutSym} (fee: ${feePct}%, gas: ${gasEstimate})`
-          );
-
-          const amountOutStr = `${Number(amountOutFormatted).toFixed(6)} ${tokenOutSym}`;
           return {
-            amountOut: amountOutStr || `0 ${tokenOutSym}`,  // always defined
+            amountOut: `${Number(amountOutFormatted).toFixed(6)} ${tokenOutSym}`,
             priceImpact,
             gasEstimate: gasEstimate.toString(),
             route: `${tokenInSym} → [V3 ${feePct}%] → ${tokenOutSym}`,
-            source: 'uniswap-v3-quoter',
+            source: 'uniswap-v3-quoter' as const,
             rawAmountOut: amountOut.toString(),
             chainId,
             fee,
             rate,
+            amountOutRaw: amountOut,
           };
         }
       } catch {
-        // Pool may not exist for this fee tier, try next
-        continue;
+        return null;
       }
+      return null;
+    });
+
+    const results = (await Promise.all(quotePromises)).filter((r): r is NonNullable<typeof r> => r !== null);
+    
+    if (results.length > 0) {
+      // Sort by best amount out
+      const bestResult = results.sort((a, b) => (b.amountOutRaw > a.amountOutRaw ? 1 : -1))[0]!;
+      const { amountOutRaw: _, ...finalResult } = bestResult;
+      
+      console.log(`[UniswapAdapter] Best QuoterV2 quote found: ${finalResult.amountOut} (fee: ${finalResult.fee / 10000}%)`);
+      return finalResult;
     }
 
     console.log(`[UniswapAdapter] No V3 pool found for ${params.tokenIn}/${params.tokenOut} on chain ${chainId}`);

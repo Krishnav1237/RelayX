@@ -1,6 +1,6 @@
 import { createPublicClient, http } from 'viem';
 import { normalize } from 'viem/ens';
-import { getRelayXChain, getRelayXRpcUrls } from '../config/chain';
+import { getRelayXChain, getRelayXRpcUrls } from '../config/chain.js';
 
 interface ENSCacheEntry {
   address: string | null;
@@ -10,7 +10,7 @@ interface ENSCacheEntry {
 
 const DEFAULT_ENS_RECORD_KEYS = ['description', 'url', 'com.twitter', 'com.github'] as const;
 const DEFAULT_CACHE_DURATION_MS = 5 * 60 * 1000;
-const ENS_TIMEOUT_MS = 2000;
+const ENS_TIMEOUT_MS = 4000;
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([

@@ -16,6 +16,7 @@ import {
   X,
   Wallet,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { AppBackground } from '@/components/app-background';
 import { ExecutionFloatingPanel } from '@/components/execution-floating-panel';
 import { Navbar } from '@/components/navbar';
@@ -28,6 +29,8 @@ import {
   normalizeExecutionResponse,
   saveExecutionSession,
   saveExecutionLog,
+  initializeStorage,
+  generateSessionId,
   type AgentTrace,
   type ExecutionRequest,
   type ExecutionRequestContext,
@@ -46,11 +49,19 @@ interface DashboardError {
   createdAt: number;
 }
 
+/**
+ * Dashboard page for intent input and execution visualization
+ */
+
 export default function Dashboard() {
+  const router = useRouter();
   const { isConnected, address, networkType } = useWalletStore();
   const terminalScrollRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const hasRestoredSessionRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isStoppingRef = useRef(false);
+  const [sessionId, setSessionId] = useState(generateSessionId());
   const [intent, setIntent] = useState('');
   const [demoMode, setDemoMode] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
@@ -68,6 +79,39 @@ export default function Dashboard() {
   const [showSummary, setShowSummary] = useState(false);
   const [resultPanelCollapsed, setResultPanelCollapsed] = useState(false);
   const [resultPanelDismissed, setResultPanelDismissed] = useState(false);
+
+  // Track current chain ID for network status
+  const [currentChainId, setCurrentChainId] = useState<number | null>(null);
+
+  // Check chain ID when wallet is connected
+  useEffect(() => {
+    if (!isConnected || !address) {
+      setCurrentChainId(null);
+      return;
+    }
+
+    const checkChainId = async () => {
+      try {
+        const chainId = await getCurrentChainId();
+        setCurrentChainId(chainId);
+      } catch {
+        setCurrentChainId(null);
+      }
+    };
+
+    checkChainId();
+
+    // Listen for chain changes
+    if (typeof window !== 'undefined' && window.ethereum) {
+      const handleChainChanged = (chainIdHex: string) => {
+        setCurrentChainId(parseInt(chainIdHex, 16));
+      };
+      window.ethereum.on('chainChanged', handleChainChanged);
+      return () => {
+        window.ethereum.removeListener('chainChanged', handleChainChanged);
+      };
+    }
+  }, [isConnected, address]);
 
   // Defensive check for visibleTraces content
   const terminalEvents = useMemo(() => {
@@ -105,6 +149,7 @@ export default function Dashboard() {
 
   const getSessionSnapshot = useCallback(
     (overrides: Partial<ExecutionSessionSnapshot> = {}): ExecutionSessionSnapshot => ({
+      sessionId,
       intent,
       demoMode,
       debugMode,
@@ -120,6 +165,7 @@ export default function Dashboard() {
       ...overrides,
     }),
     [
+      sessionId, // CRITICAL: Must include sessionId in dependencies
       intent,
       demoMode,
       debugMode,
@@ -136,6 +182,9 @@ export default function Dashboard() {
   );
 
   useEffect(() => {
+    // Clear state only once per browser tab session
+    initializeStorage();
+
     const restoreTimer = window.setTimeout(() => {
       const savedSession = loadExecutionSession();
 
@@ -148,6 +197,7 @@ export default function Dashboard() {
             savedSession.response && !shouldResumeStreaming && savedSession.visibleTraces.length > 0
           );
 
+        setSessionId(savedSession.sessionId);
         setIntent(savedSession.intent);
         setDemoMode(savedSession.demoMode);
         setDebugMode(savedSession.debugMode);
@@ -178,10 +228,12 @@ export default function Dashboard() {
   // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!intent.trim() || isSubmitting || isStreaming || isApproving) return;
+    if (!intent.trim() || isSubmitting || isStreaming || isApproving || isStoppingRef.current) return;
 
     shouldAutoScrollRef.current = true;
     setIsSubmitting(true);
+    const newSessionId = generateSessionId();
+    setSessionId(newSessionId);
     setResponse(null);
     setVisibleTraces([]);
     setStreamQueue([]);
@@ -196,16 +248,42 @@ export default function Dashboard() {
     if (address) context.wallet = address;
     setLastRequestContext(context);
 
+    // Clear old logs and save initial session state BEFORE making the request
+    // This ensures logs page shows the new session immediately
+    const initialSession: ExecutionSessionSnapshot = {
+      sessionId: newSessionId,
+      intent: intent.trim(),
+      demoMode,
+      debugMode,
+      requestContext: context,
+      response: null,
+      visibleTraces: [],
+      streamQueue: [],
+      isStreaming: false,
+      showSummary: false,
+      approvalCancelled: false,
+      resultPanelCollapsed: false,
+      resultPanelDismissed: false,
+    };
+    console.log('[DASHBOARD DEBUG] Saving initial session:', {
+      sessionId: newSessionId,
+      intent: intent.trim(),
+    });
+    saveExecutionSession(initialSession);
+
     const body: ExecutionRequest =
       Object.keys(context).length > 0
         ? { intent: intent.trim(), context }
         : { intent: intent.trim() };
+
+    abortControllerRef.current = new AbortController();
 
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: abortControllerRef.current.signal,
       });
 
       if (!res.ok) {
@@ -213,32 +291,28 @@ export default function Dashboard() {
       }
 
       const data = normalizeExecutionResponse(await res.json());
+      data.sessionId = newSessionId; // Use the NEW session ID, not the old one
       setResponse(data);
       setStreamQueue(data.trace);
       saveExecutionLog(data);
-      saveExecutionSession(
-        getSessionSnapshot({
-          intent: body.intent,
-          demoMode,
-          debugMode,
-          requestContext: context,
-          response: data,
-          visibleTraces: [],
-          streamQueue: data.trace,
-          isStreaming: true,
-          showSummary: false,
-          approvalCancelled: false,
-          resultPanelCollapsed: false,
-          resultPanelDismissed: false,
-        })
-      );
+      saveExecutionSession({
+        ...initialSession,
+        response: data,
+        streamQueue: data.trace,
+        isStreaming: true,
+        savedAt: Date.now(),
+      });
       setIsStreaming(true);
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return; // Handled by handleStop
+      }
       console.error(error);
       setIsStreaming(false);
       pushError(error);
     } finally {
       setIsSubmitting(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -254,32 +328,88 @@ export default function Dashboard() {
     try {
       // 1. If we have real calldata from Uniswap, execute the transaction first via MetaMask
       const synthTraces: AgentTrace[] = [];
+
+      // Log the user's approval
+      synthTraces.push({
+        agent: 'system.relay.eth',
+        step: 'approval_granted',
+        message: 'Execution request was approved by the user.',
+        metadata: {},
+        timestamp: Date.now(),
+      });
+
+      // 1. Submit on-chain via wallet if calldata exists
       if (response.final_result.swap?.calldata && address) {
+        console.log('[DASHBOARD] Submitting transaction to MetaMask...', {
+          hasCalldata: !!response.final_result.swap.calldata,
+          wallet: address,
+        });
+
         // Fetch the actual live chainId from MetaMask instead of guessing
         let chainId = 11155111; // default to Sepolia
         try {
           chainId = await getCurrentChainId();
+          console.log('[DASHBOARD] Current chain ID:', chainId);
         } catch {
           // keep Sepolia default if provider unavailable
         }
+
+        // Network Guard: Force Sepolia if we have real calldata
+        if (chainId !== 11155111) {
+          console.log('[DASHBOARD] Wrong network, switching to Sepolia...');
+          try {
+            await switchToSepolia();
+            chainId = 11155111;
+            console.log('[DASHBOARD] Switched to Sepolia successfully');
+          } catch (err) {
+            throw new Error('Please switch to Sepolia to execute this transaction.');
+          }
+        }
+
+        // Add trace to show transaction is being submitted
+        synthTraces.push({
+          agent: 'executor.relay.eth',
+          step: 'transaction_submit',
+          message: 'Submitting swap transaction to MetaMask for signature...',
+          metadata: { chainId, router: response.final_result.swap.calldata.to },
+          timestamp: Date.now(),
+        });
+
+        // Update UI to show transaction is being submitted
+        setVisibleTraces((prev) => [...prev, ...synthTraces]);
+
         try {
+          console.log('[DASHBOARD] Calling submitSwapTransaction...');
           const swapResult = await submitSwapTransaction(
             response.final_result.swap.calldata,
             address,
             chainId
           );
+          console.log('[DASHBOARD] Transaction submitted successfully!', swapResult);
+          
           // Record synthetic trace — we'll merge it with backend traces below
           synthTraces.push({
-            agent: 'executor.relayx.eth',
+            agent: 'executor.relay.eth',
             step: 'execute',
-            message: `Transaction broadcasted on-chain! Hash: ${swapResult.txHash}`,
-            metadata: { txHash: swapResult.txHash, explorerUrl: swapResult.explorerUrl, chainId },
+            message: `✓ Transaction broadcasted on-chain! Hash: ${swapResult.txHash}`,
+            metadata: { 
+              txHash: swapResult.txHash, 
+              explorerUrl: swapResult.explorerUrl, 
+              chainId,
+              success: true,
+            },
             timestamp: Date.now(),
           });
         } catch (err) {
+          console.error('[DASHBOARD] Transaction failed:', err);
           // User rejected or transaction failed — abort entirely
           throw new Error(`Transaction failed or rejected: ${err instanceof Error ? err.message : String(err)}`);
         }
+      } else {
+        console.log('[DASHBOARD] No calldata or wallet address, skipping on-chain execution', {
+          hasCalldata: !!response.final_result.swap?.calldata,
+          hasWallet: !!address,
+        });
       }
 
       // 2. Confirm execution on backend to store history on 0G Galileo
@@ -297,14 +427,16 @@ export default function Dashboard() {
       // Merge synthetic MetaMask traces with backend traces so they aren't overwritten
       const backendNewTraces = data.trace.slice(visibleTraces.length);
       const mergedNewTraces = [...synthTraces, ...backendNewTraces];
-      const queuedTraces = mergedNewTraces.length > 0 ? mergedNewTraces : data.trace;
-      setResponse(data);
-      setStreamQueue(queuedTraces);
-      saveExecutionLog(data);
+      const combinedTrace = [...visibleTraces, ...mergedNewTraces];
+      const finalResponse = { ...data, trace: combinedTrace };
+      
+      setResponse(finalResponse);
+      setStreamQueue(mergedNewTraces);
+      saveExecutionLog(finalResponse);
       saveExecutionSession(
         getSessionSnapshot({
-          response: data,
-          streamQueue: queuedTraces,
+          response: finalResponse,
+          streamQueue: mergedNewTraces,
           isStreaming: true,
           showSummary: false,
           approvalCancelled: false,
@@ -326,12 +458,31 @@ export default function Dashboard() {
   const handleCancelApproval = () => {
     setApprovalCancelled(true);
     setShowSummary(true);
+
+    const cancelTrace: AgentTrace = {
+      agent: 'system.relay.eth',
+      step: 'approval_cancelled',
+      message: 'Execution request was rejected by the user.',
+      metadata: {},
+      timestamp: Date.now(),
+    };
+
+    const nextTraces = [...visibleTraces, cancelTrace];
+    setVisibleTraces(nextTraces);
+
+    if (response) {
+      const updatedResponse = { ...response, trace: nextTraces };
+      setResponse(updatedResponse);
+      saveExecutionLog(updatedResponse);
+    }
+
     saveExecutionSession(
       getSessionSnapshot({
         approvalCancelled: true,
         showSummary: true,
         resultPanelCollapsed: false,
         resultPanelDismissed: false,
+        visibleTraces: nextTraces,
       })
     );
   };
@@ -355,6 +506,8 @@ export default function Dashboard() {
       const summaryTimer = window.setTimeout(() => {
         setIsStreaming(false);
         setShowSummary(true);
+        // Save final state when streaming completes
+        saveExecutionSession(getSessionSnapshot({ isStreaming: false, showSummary: true }));
       }, 500);
       return () => window.clearTimeout(summaryTimer);
     }
@@ -362,13 +515,23 @@ export default function Dashboard() {
     const streamTimer = window.setTimeout(() => {
       const [nextTrace, ...remainingTraces] = streamQueue;
       if (nextTrace) {
-        setVisibleTraces((prev) => [...prev, nextTrace]);
+        setVisibleTraces((prev) => {
+          const nextTraces = [...prev, nextTrace];
+          // Save session after each trace is added to keep dashboard and logs in sync
+          saveExecutionSession(
+            getSessionSnapshot({
+              visibleTraces: nextTraces,
+              streamQueue: remainingTraces,
+            })
+          );
+          return nextTraces;
+        });
       }
       setStreamQueue(remainingTraces);
     }, 800);
 
     return () => window.clearTimeout(streamTimer);
-  }, [isStreaming, streamQueue]);
+  }, [isStreaming, streamQueue, getSessionSnapshot]);
 
   useEffect(() => {
     const terminal = terminalScrollRef.current;
@@ -387,6 +550,67 @@ export default function Dashboard() {
   const hasVisibleAgent = (agent: string) =>
     visibleTraces.some((trace) => trace && normalizeAgentName(trace.agent) === agent);
   const isSubmitDisabled = !intent.trim() || isSubmitting || isStreaming || isApproving;
+
+  const handleStop = (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    isStoppingRef.current = true;
+    setTimeout(() => {
+      isStoppingRef.current = false;
+    }, 500);
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
+    setIsSubmitting(false);
+    setIsStreaming(false);
+    setStreamQueue([]);
+    
+    const stopTrace: AgentTrace = {
+      agent: 'system.relay.eth',
+      step: 'interrupted',
+      message: 'Execution stopped by user.',
+      metadata: {},
+      timestamp: Date.now(),
+    };
+    
+    setVisibleTraces((prev) => {
+      const nextTraces = [...prev, stopTrace];
+      
+      console.log('[DASHBOARD DEBUG] Stopping execution:', {
+        sessionId,
+        traceCount: nextTraces.length,
+        hasResponse: !!response,
+      });
+      
+      // Update response with new traces and ensure sessionId is set
+      const updatedResponse = response ? {
+        ...response,
+        sessionId,
+        trace: nextTraces,
+      } : null;
+      
+      if (updatedResponse) {
+        setResponse(updatedResponse);
+        saveExecutionLog(updatedResponse);
+      }
+      
+      saveExecutionSession(
+        getSessionSnapshot({
+          isStreaming: false,
+          streamQueue: [],
+          visibleTraces: nextTraces,
+          response: updatedResponse,
+        })
+      );
+      return nextTraces;
+    });
+  };
 
   return (
     <div className="relay-page">
@@ -423,13 +647,24 @@ export default function Dashboard() {
                 className="min-h-14 flex-1 rounded-lg border border-transparent bg-background/30 py-4 pl-12 pr-4 text-foreground transition-colors placeholder:text-zinc-500 focus:border-emerald-500/30 focus:bg-background/60 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
                 disabled={isSubmitting || isStreaming || isApproving}
               />
-              <button
-                type="submit"
-                disabled={isSubmitDisabled}
-                className="relay-button-primary min-h-12 px-6 sm:m-1"
-              >
-                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Execute'}
-              </button>
+              {isSubmitting || isStreaming ? (
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className="relay-button-secondary min-h-12 px-6 sm:m-1 border-red-500/30 text-red-500 hover:bg-red-500/10 hover:text-red-400"
+                >
+                  <X className="mr-2 h-4 w-4" />
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={isSubmitDisabled}
+                  className="relay-button-primary min-h-12 px-6 sm:m-1"
+                >
+                  Execute
+                </button>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-3 px-3 pb-2 text-xs text-zinc-500 dark:text-zinc-400">
@@ -491,8 +726,12 @@ export default function Dashboard() {
               )}
 
               <AnimatePresence>
-                {terminalEvents.map((event, idx) => (
-                  <TerminalStatusRow event={event} key={`${event.timestamp}-${idx}`} />
+                {terminalEvents.map((event, i) => (
+                  <TerminalStatusRow
+                    key={`${event.agent}-${event.timestamp}-${i}`}
+                    event={event}
+                    onClick={() => router.push(`/logs?t=${event.timestamp}`)}
+                  />
                 ))}
 
                 {isStreaming && (
@@ -531,10 +770,31 @@ export default function Dashboard() {
                   <div className="space-y-1.5">
                     <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Required Network</p>
                     <button
-                      onClick={async () => { try { await switchToSepolia(); } catch (e) { console.error(e); } }}
-                      className="w-full text-left rounded-lg border border-border bg-accent/30 px-3 py-2 text-xs text-zinc-400 transition-colors hover:border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-400"
+                      onClick={async () => { 
+                        if (currentChainId === 11155111) return; // Already on Sepolia
+                        try { 
+                          await switchToSepolia(); 
+                          const newChainId = await getCurrentChainId();
+                          setCurrentChainId(newChainId);
+                        } catch (e) { 
+                          console.error(e); 
+                        } 
+                      }}
+                      className={cn(
+                        "w-full text-left rounded-lg border px-3 py-2 text-xs transition-colors",
+                        currentChainId === 11155111
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 cursor-default"
+                          : "border-border bg-accent/30 text-zinc-400 hover:border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-400"
+                      )}
                     >
-                      ⬡ Switch to Sepolia — Uniswap quotes &amp; signing
+                      {currentChainId === 11155111 ? (
+                        <span className="flex items-center gap-2">
+                          <span className="text-emerald-400">✓</span>
+                          Connected to Sepolia
+                        </span>
+                      ) : (
+                        <span>⬡ Switch to Sepolia — Uniswap quotes &amp; signing</span>
+                      )}
                     </button>
                   </div>
 
@@ -554,7 +814,7 @@ export default function Dashboard() {
               <div className="space-y-3">
                 <AgentStatusItem
                   agent="system.relay.eth"
-                  icon={<Play className="h-4 w-4 text-cyan-500" />}
+                  icon={<Play className="h-4 w-4 text-indigo-500" />}
                   active={isSubmitting || isStreaming || hasVisibleAgent('system.relay.eth')}
                 />
                 <AgentStatusItem
@@ -564,12 +824,12 @@ export default function Dashboard() {
                 />
                 <AgentStatusItem
                   agent="risk.relay.eth"
-                  icon={<Shield className="h-4 w-4 text-teal-500" />}
+                  icon={<Shield className="h-4 w-4 text-amber-500" />}
                   active={isStreaming && hasVisibleAgent('risk.relay.eth')}
                 />
                 <AgentStatusItem
                   agent="executor.relay.eth"
-                  icon={<Terminal className="h-4 w-4 text-sky-500" />}
+                  icon={<Terminal className="h-4 w-4 text-fuchsia-500" />}
                   active={(isStreaming || isApproving) && hasVisibleAgent('executor.relay.eth')}
                 />
               </div>
@@ -595,19 +855,20 @@ export default function Dashboard() {
   );
 }
 
-function TerminalStatusRow({ event }: { event: TerminalStatusEvent }) {
+function TerminalStatusRow({ event, onClick }: { event: TerminalStatusEvent; onClick: () => void }) {
   return (
     <motion.div
       initial={{ opacity: 0, x: -10 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
-      className="flex flex-col gap-1 rounded-lg border border-transparent p-2 text-zinc-700 transition-colors hover:border-emerald-500/10 hover:bg-emerald-500/5 dark:text-zinc-300"
+      onClick={onClick}
+      className="flex cursor-pointer flex-col gap-1 rounded-lg border border-transparent p-2 text-zinc-700 transition-colors hover:border-emerald-500/10 hover:bg-emerald-500/5 dark:text-zinc-300"
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-zinc-400 dark:text-zinc-500">
           [{new Date(event.timestamp).toISOString().split('T')[1].slice(0, -1)}]
         </span>
-        <AgentBadge agent={event.agent} />
+        <AgentBadge agent={event.agent} message={event.message} />
       </div>
       <div className="pl-0 sm:pl-[100px] text-zinc-600 dark:text-zinc-400">{event.message}</div>
     </motion.div>
@@ -728,23 +989,34 @@ function ErrorStack({
   );
 }
 
-function AgentBadge({ agent }: { agent: string }) {
+function AgentBadge({ agent, message }: { agent: string; message?: string }) {
   const normalizedAgent = normalizeAgentName(agent);
   let colorClass =
     'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-transparent';
 
   if (normalizedAgent === 'system.relay.eth')
     colorClass =
-      'bg-cyan-50 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 border-cyan-200 dark:border-cyan-500/30';
+      'bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-500/30';
+  
   if (normalizedAgent === 'yield.relay.eth')
     colorClass =
       'bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30';
-  if (normalizedAgent === 'risk.relay.eth')
-    colorClass =
-      'bg-teal-50 dark:bg-teal-500/20 text-teal-600 dark:text-teal-400 border-teal-200 dark:border-teal-500/30';
+  
+  if (normalizedAgent === 'risk.relay.eth') {
+    colorClass = 'bg-amber-50 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-500/30';
+    if (message) {
+      const msg = message.toLowerCase();
+      if (msg.includes('reject') || msg.includes('fail') || msg.includes('high risk')) {
+        colorClass = 'bg-red-50 dark:bg-red-500/20 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30';
+      } else if (msg.includes('medium risk') || msg.includes('weak') || msg.includes('approaching')) {
+        colorClass = 'bg-yellow-50 dark:bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-500/30';
+      }
+    }
+  }
+
   if (normalizedAgent === 'executor.relay.eth')
     colorClass =
-      'bg-sky-50 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400 border-sky-200 dark:border-sky-500/30';
+      'bg-fuchsia-50 dark:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-400 border-fuchsia-200 dark:border-fuchsia-500/30';
 
   return (
     <span className={cn('px-2 py-0.5 rounded text-xs border font-medium', colorClass)}>

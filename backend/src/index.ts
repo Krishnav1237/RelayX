@@ -1,19 +1,21 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express, { Express, Request, Response } from 'express';
 import {
   analyzeHandler,
   confirmExecutionHandler,
   executeHandler,
-} from './controllers/execute.controller';
-import { ENSAdapter } from './adapters/ENSAdapter';
-import { YieldDataAdapter } from './adapters/YieldDataAdapter';
-import { AXLAdapter } from './adapters/AXLAdapter';
-import { UniswapAdapter } from './adapters/UniswapAdapter';
-import { ZeroGMemoryAdapter } from './adapters/ZeroGMemoryAdapter';
-import { getAgentEnsRoot } from './config/agents';
-import { getRelayXChain, getRelayXRpcUrls } from './config/chain';
-import { getApprovalTtlMs, getMaxIntentLength } from './config/security';
-import { createInMemoryRateLimiter } from './middleware/rateLimit';
+} from './controllers/execute.controller.js';
+import { ENSAdapter } from './adapters/ENSAdapter.js';
+import { YieldDataAdapter } from './adapters/YieldDataAdapter.js';
+import { AXLAdapter } from './adapters/AXLAdapter.js';
+import { UniswapAdapter } from './adapters/UniswapAdapter.js';
+import { ZeroGMemoryAdapter } from './adapters/ZeroGMemoryAdapter.js';
+import { getAgentEnsRoot } from './config/agents.js';
+import { getRelayXChain, getRelayXRpcUrls } from './config/chain.js';
+import { getApprovalTtlMs, getMaxIntentLength } from './config/security.js';
+import { createInMemoryRateLimiter } from './middleware/rateLimit.js';
 
 const app: Express = express();
 const PORT = Number(process.env.PORT ?? 3001);
@@ -48,11 +50,9 @@ console.log(
 );
 console.log(
   '[BOOT] LLM:',
-  process.env.OPENROUTER_API_KEY
-    ? 'enabled (OpenRouter)'
-    : process.env.GROQ_API_KEY
-      ? 'enabled (Groq)'
-      : 'disabled'
+  process.env.GROQ_API_KEY
+    ? `enabled (Groq, model: ${process.env.GROQ_MODEL ?? 'llama-3.1-8b-instant'})`
+    : 'disabled (no GROQ_API_KEY)'
 );
 console.log(
   '[BOOT] Uniswap:',
@@ -211,6 +211,33 @@ app.get('/integration-health', async (_req: Request, res: Response) => {
 app.post('/analyze', analyzeHandler);
 app.post('/execute/confirm', confirmExecutionHandler);
 app.post('/execute', executeHandler);
+
+// ─── Global error handler ─────────────────────────────────────────────────────
+
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[EXPRESS ERROR]', err.message);
+  if (err.stack) {
+    console.error('[EXPRESS ERROR STACK]', err.stack);
+  }
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Global unhandled rejection handler ───────────────────────────────────────
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[UNHANDLED REJECTION]', reason);
+  console.error('[UNHANDLED REJECTION] Promise:', promise);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[UNCAUGHT EXCEPTION]', error.message);
+  if (error.stack) {
+    console.error('[UNCAUGHT EXCEPTION STACK]', error.stack);
+  }
+  // Don't exit - let the process continue
+});
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 

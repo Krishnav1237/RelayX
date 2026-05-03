@@ -93,7 +93,7 @@ export default function Home() {
                   icon={<Terminal />}
                   agent="system.relay.eth"
                   status="Analyzing"
-                  tone="cyan"
+                  tone="indigo"
                 />
                 <AgentPreview
                   icon={<Zap />}
@@ -105,13 +105,13 @@ export default function Home() {
                   icon={<Shield />}
                   agent="risk.relay.eth"
                   status="Approved"
-                  tone="teal"
+                  tone="amber"
                 />
                 <AgentPreview
                   icon={<Layers />}
                   agent="executor.relay.eth"
                   status="Awaiting approval"
-                  tone="cyan"
+                  tone="fuchsia"
                 />
               </div>
             </div>
@@ -226,12 +226,13 @@ function AgentPreview({
   icon: ReactNode;
   agent: string;
   status: string;
-  tone: 'cyan' | 'emerald' | 'teal';
+  tone: 'indigo' | 'emerald' | 'amber' | 'fuchsia';
 }) {
   const toneClass = {
-    cyan: 'border-cyan-500/25 text-cyan-600 dark:text-cyan-300',
+    indigo: 'border-indigo-500/25 text-indigo-600 dark:text-indigo-300',
     emerald: 'border-emerald-500/25 text-emerald-600 dark:text-emerald-300',
-    teal: 'border-teal-500/25 text-teal-600 dark:text-teal-300',
+    amber: 'border-amber-500/25 text-amber-600 dark:text-amber-300',
+    fuchsia: 'border-fuchsia-500/25 text-fuchsia-600 dark:text-fuchsia-300',
   }[tone];
 
   return (

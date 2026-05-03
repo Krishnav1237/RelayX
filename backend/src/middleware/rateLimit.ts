@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { getRateLimitMaxRequests, getRateLimitWindowMs } from '../config/security';
+import { getRateLimitMaxRequests, getRateLimitWindowMs } from '../config/security.js';
 
 interface RateLimitBucket {
   count: number;

@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Activity, Clock, Database, Filter, Terminal } from 'lucide-react';
+import { Activity, Clock, Database, Filter, Terminal, ArrowLeft, X } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 import { AppBackground } from '@/components/app-background';
 import { ExecutionFloatingPanel } from '@/components/execution-floating-panel';
 import { Navbar } from '@/components/navbar';
@@ -14,6 +16,8 @@ import {
   normalizeAgentName,
   normalizeExecutionResponse,
   saveExecutionSession,
+  saveExecutionLog,
+  initializeStorage,
   type AgentTrace,
   type CanonicalAgentName,
   type ExecutionResponse,
@@ -33,23 +37,50 @@ const AGENT_FILTERS: Array<{ label: string; value: AgentFilter }> = [
 ];
 
 export default function LogsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const highlightTimestamp = searchParams.get('t');
+  
   const [storedLog, setStoredLog] = useState<StoredExecutionLog | null>(null);
   const [storedSession, setStoredSession] = useState<StoredExecutionSession | null>(null);
   const [activeFilter, setActiveFilter] = useState<AgentFilter>('all');
   const [isApproving, setIsApproving] = useState(false);
 
   useEffect(() => {
+    // Clear state only once per browser tab session
+    initializeStorage();
+
     const refreshLog = () => {
       const session = loadExecutionSession();
+      console.log('[LOGS DEBUG] Loaded session:', {
+        sessionId: session?.sessionId,
+        hasResponse: !!session?.response,
+        visibleTracesCount: session?.visibleTraces.length ?? 0,
+        intent: session?.intent,
+      });
       setStoredSession(session);
-      setStoredLog(loadCurrentExecutionLog(session));
+      const log = loadCurrentExecutionLog(session);
+      console.log('[LOGS DEBUG] Loaded log:', {
+        traceCount: log?.response.trace.length ?? 0,
+        hasApproval: !!log?.response.approval,
+        sessionId: log?.response.sessionId,
+      });
+      setStoredLog(log);
     };
+    
+    // Initial load
     const timeout = window.setTimeout(refreshLog, 0);
 
+    // Listen for storage changes from other tabs
     window.addEventListener('storage', refreshLog);
+    
+    // Poll every 500ms to catch changes in the same tab
+    // (storage event doesn't fire for same-tab changes)
+    const pollInterval = window.setInterval(refreshLog, 500);
 
     return () => {
       window.clearTimeout(timeout);
+      window.clearInterval(pollInterval);
       window.removeEventListener('storage', refreshLog);
     };
   }, []);
@@ -59,13 +90,32 @@ export default function LogsPage() {
     return [...rawTraces].sort((a, b) => a.timestamp - b.timestamp);
   }, [storedLog]);
 
+  useEffect(() => {
+    if (highlightTimestamp && traces.length > 0) {
+      const element = document.getElementById(`trace-${highlightTimestamp}`);
+      if (element) {
+        // Only scroll once when the component mounts or traces change
+        // Don't keep scrolling on every render
+        window.setTimeout(() => {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 300);
+      }
+    }
+  }, [highlightTimestamp, traces.length]); // Only depend on traces.length, not traces array
+
   const filteredTraces = useMemo(() => {
     if (activeFilter === 'all') return traces;
     return traces.filter((trace) => normalizeAgentName(trace.agent) === activeFilter);
   }, [activeFilter, traces]);
 
   const response = storedLog?.response ?? null;
-  const showFloatingPanel = Boolean(storedSession?.response && !storedSession.resultPanelDismissed);
+  const isStaleOrIncomplete = !response || response.summary.explanation === 'Execution in progress or interrupted.';
+  const showFloatingPanel = Boolean(
+    storedSession?.response && 
+    !storedSession.resultPanelDismissed && 
+    !isStaleOrIncomplete &&
+    storedSession.response.approval // Only show if there's an actual approval pending
+  );
 
   const toggleFloatingPanel = () => {
     if (!storedSession) return;
@@ -106,10 +156,26 @@ export default function LogsPage() {
       }
 
       const response = normalizeExecutionResponse(await res.json());
+      response.sessionId = storedSession.sessionId;
+
+      const approveTrace: AgentTrace = {
+        agent: 'system.relay.eth',
+        step: 'approval_granted',
+        message: 'Execution request was approved by the user.',
+        metadata: {},
+        timestamp: Date.now(),
+      };
+      
+      const newTraces = [approveTrace, ...response.trace.slice(storedSession.response.trace.length)];
+      const combinedResponse = {
+        ...response,
+        trace: [...storedSession.response.trace, ...newTraces],
+      };
+
       const nextSession: StoredExecutionSession = {
         ...storedSession,
-        response,
-        visibleTraces: response.trace,
+        response: combinedResponse,
+        visibleTraces: combinedResponse.trace,
         streamQueue: [],
         isStreaming: false,
         showSummary: true,
@@ -120,7 +186,7 @@ export default function LogsPage() {
       };
 
       setStoredSession(nextSession);
-      setStoredLog({ response, savedAt: nextSession.savedAt });
+      setStoredLog({ response: combinedResponse, savedAt: nextSession.savedAt });
       saveExecutionSession(nextSession);
     } catch (error) {
       console.error(error);
@@ -132,8 +198,23 @@ export default function LogsPage() {
   const cancelApproval = () => {
     if (!storedSession) return;
 
+    const cancelTrace: AgentTrace = {
+      agent: 'system.relay.eth',
+      step: 'approval_cancelled',
+      message: 'Execution request was rejected by the user.',
+      metadata: {},
+      timestamp: Date.now(),
+    };
+
+    const nextResponse = storedSession.response ? {
+      ...storedSession.response,
+      trace: [...storedSession.response.trace, cancelTrace]
+    } : null;
+
     const nextSession: StoredExecutionSession = {
       ...storedSession,
+      response: nextResponse,
+      visibleTraces: nextResponse ? nextResponse.trace : [],
       showSummary: true,
       approvalCancelled: true,
       resultPanelCollapsed: false,
@@ -142,6 +223,9 @@ export default function LogsPage() {
     };
 
     setStoredSession(nextSession);
+    if (storedLog && nextResponse) {
+      setStoredLog({ response: nextResponse, savedAt: nextSession.savedAt });
+    }
     saveExecutionSession(nextSession);
   };
 
@@ -161,6 +245,15 @@ export default function LogsPage() {
             <p className="relay-muted mt-2 max-w-2xl text-sm">
               Full backend trace for the latest dashboard execution.
             </p>
+            {highlightTimestamp && (
+              <button
+                onClick={() => router.push('/logs')}
+                className="mt-3 inline-flex items-center gap-1.5 text-xs text-emerald-500 hover:text-emerald-400 transition-colors"
+              >
+                <X className="h-3 w-3" />
+                Clear highlight
+              </button>
+            )}
           </div>
 
           <LogSnapshotMeta storedLog={storedLog} traceCount={traces.length} />
@@ -189,7 +282,7 @@ export default function LogsPage() {
                     className={cn(
                       'rounded-lg border px-3 py-1.5 text-xs font-medium transition-all duration-200 hover:-translate-y-0.5',
                       activeFilter === filter.value
-                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        ? agentFilterActiveClasses(filter.value)
                         : 'border-border bg-background/40 text-zinc-500 hover:bg-accent hover:text-foreground'
                     )}
                   >
@@ -219,11 +312,12 @@ export default function LogsPage() {
               <div className="terminal-scroll flex-1 overflow-y-auto overscroll-contain p-4 font-mono text-sm">
                 {filteredTraces.length > 0 ? (
                   <div className="space-y-3">
-                    {filteredTraces.map((trace, index) => (
+                    {filteredTraces.map((trace, i) => (
                       <LogEntry
+                        key={`${trace.timestamp}-${i}`}
                         trace={trace}
-                        index={index}
-                        key={`${trace.timestamp}-${trace.agent}-${trace.step}-${index}`}
+                        index={i}
+                        initialOpen={highlightTimestamp === String(trace.timestamp)}
                       />
                     ))}
                   </div>
@@ -270,14 +364,56 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function loadCurrentExecutionLog(session = loadExecutionSession()): StoredExecutionLog | null {
-  if (session?.response) {
+  // If there's no active session, show nothing
+  // This prevents showing stale/old execution data
+  if (!session) {
+    return null;
+  }
+
+  // Priority 1: If session has a complete response, use it (most authoritative)
+  if (session.response) {
+    // Use visibleTraces from session as they're more up-to-date than response.trace
+    const syncedResponse = {
+      ...session.response,
+      trace: session.visibleTraces.length > 0 ? session.visibleTraces : session.response.trace,
+    };
     return {
-      response: session.response,
+      response: syncedResponse,
       savedAt: session.savedAt,
     };
   }
 
-  return loadExecutionLog();
+  // Priority 2: If we have a session with partial traces (execution in progress or stopped)
+  if (session.visibleTraces.length > 0) {
+    return {
+      response: {
+        sessionId: session.sessionId,
+        intent: session.intent,
+        trace: session.visibleTraces,
+        summary: {
+          selectedProtocol: '',
+          initialProtocol: '',
+          finalProtocol: '',
+          wasRetried: false,
+          totalSteps: session.visibleTraces.length,
+          confidence: 0,
+          explanation: 'Execution in progress or interrupted.',
+          decisionImpact: { ens: '', axl: '', memory: '' },
+        },
+        final_result: {
+          protocol: '',
+          apy: '',
+          action: '',
+          status: 'failed',
+        },
+      },
+      savedAt: session.savedAt,
+    };
+  }
+
+  // Priority 3: Session exists but has no traces yet (just started)
+  // Show empty state
+  return null;
 }
 
 function LogResultSummary({
@@ -358,15 +494,24 @@ function LogSnapshotMeta({
   );
 }
 
-function LogEntry({ trace, index }: { trace: AgentTrace; index: number }) {
+function LogEntry({
+  trace,
+  index,
+  initialOpen,
+}: {
+  trace: AgentTrace;
+  index: number;
+  initialOpen?: boolean;
+}) {
   const agent = normalizeAgentName(trace.agent);
 
   return (
     <motion.article
+      id={`trace-${trace.timestamp}`}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, delay: Math.min(index * 0.015, 0.2) }}
-      className={cn('relay-card p-3', agentBorderClass(agent))}
+      className={cn('relay-card p-3', agentBorderClass(agent, trace.message))}
     >
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-wrap items-center gap-2">
@@ -376,7 +521,7 @@ function LogEntry({ trace, index }: { trace: AgentTrace; index: number }) {
           <span
             className={cn(
               'rounded border px-2 py-0.5 text-xs font-semibold',
-              agentBadgeClass(agent)
+              agentBadgeClass(agent, trace.message)
             )}
           >
             {agent}
@@ -392,7 +537,13 @@ function LogEntry({ trace, index }: { trace: AgentTrace; index: number }) {
         {trace.message || 'No message provided.'}
       </p>
 
-      <details className="mt-3 rounded-md border border-border bg-black/[0.03] dark:bg-white/[0.03]">
+      <details
+        open={initialOpen}
+        className={cn(
+          'mt-3 rounded-md border border-border bg-black/[0.03] transition-all dark:bg-white/[0.03]',
+          initialOpen && 'border-emerald-500/30 bg-emerald-500/5 ring-1 ring-emerald-500/20'
+        )}
+      >
         <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-zinc-500 transition-colors hover:text-foreground">
           metadata / details
         </summary>
@@ -435,22 +586,50 @@ function formatMetadata(metadata?: Record<string, unknown>): string {
   }
 }
 
-function agentBadgeClass(agent: string) {
+function agentBadgeClass(agent: string, message?: string) {
   if (agent === 'system.relay.eth')
-    return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300';
+    return 'border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300';
   if (agent === 'yield.relay.eth')
     return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
-  if (agent === 'risk.relay.eth')
-    return 'border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300';
+  if (agent === 'risk.relay.eth') {
+    if (message) {
+      const msg = message.toLowerCase();
+      if (msg.includes('reject') || msg.includes('fail') || msg.includes('high risk')) {
+        return 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300';
+      } else if (msg.includes('medium risk') || msg.includes('weak') || msg.includes('approaching')) {
+        return 'border-yellow-500/30 bg-yellow-500/10 text-yellow-700 dark:text-yellow-300';
+      }
+    }
+    return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+  }
   if (agent === 'executor.relay.eth')
-    return 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300';
+    return 'border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300';
   return 'border-zinc-500/30 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300';
 }
 
-function agentBorderClass(agent: string) {
-  if (agent === 'system.relay.eth') return 'border-cyan-500/20';
+function agentBorderClass(agent: string, message?: string) {
+  if (agent === 'system.relay.eth') return 'border-indigo-500/20';
   if (agent === 'yield.relay.eth') return 'border-emerald-500/20';
-  if (agent === 'risk.relay.eth') return 'border-teal-500/20';
-  if (agent === 'executor.relay.eth') return 'border-sky-500/20';
+  if (agent === 'risk.relay.eth') {
+    if (message) {
+      const msg = message.toLowerCase();
+      if (msg.includes('reject') || msg.includes('fail') || msg.includes('high risk')) {
+        return 'border-red-500/20';
+      } else if (msg.includes('medium risk') || msg.includes('weak') || msg.includes('approaching')) {
+        return 'border-yellow-500/20';
+      }
+    }
+    return 'border-amber-500/20';
+  }
+  if (agent === 'executor.relay.eth') return 'border-fuchsia-500/20';
   return 'border-border';
+}
+
+function agentFilterActiveClasses(agent: string) {
+  if (agent === 'all') return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+  if (agent === 'system.relay.eth') return 'border-indigo-500/40 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300';
+  if (agent === 'yield.relay.eth') return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+  if (agent === 'risk.relay.eth') return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+  if (agent === 'executor.relay.eth') return 'border-fuchsia-500/40 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300';
+  return 'border-zinc-500/40 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300';
 }

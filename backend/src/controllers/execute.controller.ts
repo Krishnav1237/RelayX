@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import { ExecutionService } from '../orchestrator/ExecutionService';
-import { ExecutionRequest } from '../types';
-import { validateIntent } from '../config/security';
+import { ExecutionService } from '../orchestrator/ExecutionService.js';
+import { ExecutionRequest } from '../types/index.js';
+import { validateIntent } from '../config/security.js';
 
 const executionService = new ExecutionService();
 
@@ -45,11 +45,16 @@ export async function analyzeHandler(req: Request, res: Response): Promise<void>
   const startedAt = Date.now();
 
   try {
+    console.log('[CONTROLLER] Analyze request received');
     const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
     const { intent, context } = body as Record<string, unknown>;
+    console.log('[CONTROLLER] Intent:', intent);
+    console.log('[CONTROLLER] Context:', JSON.stringify(context));
+    
     const validatedIntent = validateIntent(intent);
 
     if (!validatedIntent.ok) {
+      console.log('[CONTROLLER] Intent validation failed:', validatedIntent.error);
       res.status(400).json({ error: validatedIntent.error });
       return;
     }
@@ -59,7 +64,10 @@ export async function analyzeHandler(req: Request, res: Response): Promise<void>
       intent: validatedIntent.intent,
       context: normalizedContext,
     };
+    
+    console.log('[CONTROLLER] Starting execution service analyze...');
     const result = await executionService.analyze(request);
+    console.log('[CONTROLLER] Execution service analyze completed');
 
     if (normalizedContext?.debug === true) {
       console.log(
@@ -71,7 +79,14 @@ export async function analyzeHandler(req: Request, res: Response): Promise<void>
     console.log(`[CONTROLLER] Analysis response sent (${Date.now() - startedAt}ms)`);
   } catch (error) {
     console.error('[CONTROLLER] Analyze error:', error instanceof Error ? error.message : error);
-    res.status(500).json({ error: 'Internal server error' });
+    if (error instanceof Error && error.stack) {
+      console.error('[CONTROLLER] Stack trace:', error.stack);
+    }
+    
+    // Make sure we send a response even if there's an error
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
   }
 }
 

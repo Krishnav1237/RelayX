@@ -119,6 +119,7 @@ export interface ExecutionDebug {
 }
 
 export interface ExecutionResponse {
+  sessionId: string;
   intent: string;
   trace: AgentTrace[];
   final_result: ExecutionResult;
@@ -150,6 +151,7 @@ export interface StoredExecutionLog {
 }
 
 export interface ExecutionSessionSnapshot {
+  sessionId: string;
   intent: string;
   demoMode: boolean;
   debugMode: boolean;
@@ -187,6 +189,12 @@ const AXL_IMPACTS: readonly AXLDecisionImpact[] = ['boost', 'penalty', 'retry', 
 const MEMORY_IMPACTS: readonly MemoryImpact[] = ['boosted', 'penalized', 'neutral'];
 
 export function normalizeAgentName(agent: string): string {
+  const lower = agent.toLowerCase();
+  if (lower.startsWith('system')) return 'system.relay.eth';
+  if (lower.startsWith('yield')) return 'yield.relay.eth';
+  if (lower.startsWith('risk')) return 'risk.relay.eth';
+  if (lower.startsWith('executor')) return 'executor.relay.eth';
+  
   return LEGACY_AGENT_NAME_MAP[agent] ?? agent;
 }
 
@@ -196,6 +204,7 @@ export function normalizeExecutionResponse(payload: unknown): ExecutionResponse 
   }
 
   return {
+    sessionId: toStringValue(payload.sessionId),
     intent: toStringValue(payload.intent),
     trace: Array.isArray(payload.trace) ? payload.trace.map(normalizeAgentTrace) : [],
     final_result: normalizeExecutionResult(payload.final_result ?? payload.finalResult),
@@ -245,9 +254,56 @@ export function saveExecutionSession(session: ExecutionSessionSnapshot): void {
 
   window.localStorage.setItem(EXECUTION_SESSION_STORAGE_KEY, JSON.stringify(payload));
 
+  // Always save execution log with current traces, even if response is incomplete
+  // This ensures dashboard and logs page stay synchronized
   if (session.response) {
     saveExecutionLog(session.response);
+  } else if (session.visibleTraces.length > 0) {
+    // Save partial execution as a log entry
+    const partialResponse: ExecutionResponse = {
+      sessionId: session.sessionId,
+      intent: session.intent,
+      trace: session.visibleTraces,
+      summary: {
+        selectedProtocol: '',
+        initialProtocol: '',
+        finalProtocol: '',
+        wasRetried: false,
+        totalSteps: session.visibleTraces.length,
+        confidence: 0,
+        explanation: 'Execution in progress or interrupted.',
+        decisionImpact: { ens: '', axl: '', memory: '' },
+      },
+      final_result: {
+        protocol: '',
+        apy: '',
+        action: '',
+        status: 'failed',
+      },
+    };
+    saveExecutionLog(partialResponse);
   }
+}
+
+export function initializeStorage(): void {
+  if (typeof window === 'undefined') return;
+  
+  // Check if this is a new browser tab/window session
+  // sessionStorage is unique per tab, so if it's not initialized, this is a fresh tab
+  const isNewTabSession = !window.sessionStorage.getItem('relayx:initialized');
+  
+  if (isNewTabSession) {
+    // Mark this tab as initialized
+    window.sessionStorage.setItem('relayx:initialized', 'true');
+    
+    // DO NOT clear localStorage - it's shared across tabs
+    // Other tabs might be using the same execution data
+    // Just mark this tab as initialized so we don't clear again
+  }
+}
+
+export function generateSessionId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 export function loadExecutionSession(): StoredExecutionSession | null {
@@ -266,6 +322,7 @@ export function loadExecutionSession(): StoredExecutionSession | null {
         : normalizeExecutionResponse(parsed.response);
 
     return {
+      sessionId: toStringValue(parsed.sessionId) || generateSessionId(),
       intent: toStringValue(parsed.intent),
       demoMode: parsed.demoMode === true,
       debugMode: parsed.debugMode === true,
@@ -496,16 +553,26 @@ function getTerminalMessage(
   }
 
   if (agent === 'risk.relay.eth') {
-    if (isRecord(metadata) && metadata.decision === 'approve') {
-      return 'Risk checks passed.';
-    }
+    if (isRecord(metadata)) {
+      if (metadata.decision === 'approve') {
+        const axl = normalizeAXLInfluence(metadata.axlInfluence);
+        if (axl && axl.decisionImpact === 'boost') {
+          return `Risk checks passed. Peer consensus: ${formatRatio(axl.approvalRatio)} approval.`;
+        }
+        return 'Risk checks passed.';
+      }
 
-    if (isRecord(metadata) && metadata.decision === 'reject') {
-      return 'Risk threshold hit. Finding a safer option...';
-    }
+      if (metadata.decision === 'reject') {
+        return 'Risk threshold hit. Finding a safer option...';
+      }
 
-    if (step === 'memory') {
-      return 'Checking historical performance memory...';
+      if (step === 'memory') {
+        const mem = normalizeMemoryInfluence(metadata);
+        if (mem && mem.hasHistory) {
+          return `Historical memory: ${mem.protocol} has ${formatRatio(mem.successRate)} success rate.`;
+        }
+        return 'Checking historical performance memory...';
+      }
     }
 
     return 'Evaluating risk...';
@@ -524,6 +591,9 @@ function getTerminalMessage(
     if (step === 'approval') return 'Approval received. Executing strategy...';
     if (step === 'execute') return 'Execution complete.';
     if (step === 'explain') return 'Generating decision rationale...';
+    if (step === 'approval_cancelled') return 'Execution rejected by user.';
+    if (step === 'interrupted') return 'Execution stopped by user.';
+    if (step === 'approval_granted') return 'Execution approved by user.';
     return 'Coordinating agents...';
   }
 

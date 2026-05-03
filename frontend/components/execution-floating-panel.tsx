@@ -102,6 +102,20 @@ export function ExecutionFloatingPanel({
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
+              {response.debug?.ensInfluence && (
+                <span
+                  className={cn(
+                    'rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider',
+                    response.debug.ensInfluence.tier === 'strong'
+                      ? 'bg-emerald-500/20 text-emerald-500 border border-emerald-500/30'
+                      : response.debug.ensInfluence.tier === 'weak'
+                      ? 'bg-red-500/20 text-red-500 border border-red-500/30'
+                      : 'bg-zinc-500/20 text-zinc-500 border border-zinc-500/30'
+                  )}
+                >
+                  {response.debug.ensInfluence.tier}
+                </span>
+              )}
               <span className="rounded-full border border-border bg-background/60 px-2 py-1 font-mono text-[10px] text-zinc-500">
                 {statusLabel}
               </span>

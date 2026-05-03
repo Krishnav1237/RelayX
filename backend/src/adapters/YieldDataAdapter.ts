@@ -1,5 +1,5 @@
-import { YieldOption } from '../types';
-import { getRelayXChain } from '../config/chain';
+import { YieldOption } from '../types/index.js';
+import { getRelayXChain } from '../config/chain.js';
 
 const DEFILLAMA_URL = 'https://yields.llama.fi/pools';
 const FETCH_TIMEOUT_MS = 15000;

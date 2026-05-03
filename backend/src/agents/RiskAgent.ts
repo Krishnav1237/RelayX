@@ -1,4 +1,4 @@
-import { BaseAgent } from './BaseAgent';
+import { BaseAgent } from './BaseAgent.js';
 import {
   AXLInfluence,
   AXLMessage,
@@ -6,12 +6,14 @@ import {
   ENSInfluence,
   ENSReputationContext,
   ENSTier,
+  MemoryInfluence,
   RiskReviewResult,
   YieldOption,
-} from '../types';
-import { AXLAdapter } from '../adapters/AXLAdapter';
-import { ProtocolStats, ZeroGMemoryAdapter } from '../adapters/ZeroGMemoryAdapter';
-import { getAgentEnsName } from '../config/agents';
+} from '../types/index.js';
+import { AXLAdapter } from '../adapters/AXLAdapter.js';
+import { ZeroGMemoryAdapter } from '../adapters/ZeroGMemoryAdapter.js';
+import type { ProtocolStats } from '../adapters/ZeroGMemoryAdapter.js';
+import { getAgentEnsName } from '../config/agents.js';
 
 function normalizeConfidence(value: number): number {
   return Math.round(Math.max(0, Math.min(0.95, value)) * 100) / 100;
@@ -47,7 +49,7 @@ export class RiskAgent extends BaseAgent {
     confidence: number;
     axlInfluence: AXLInfluence;
     ensInfluence: ENSInfluence;
-    memoryInfluence?: import('../types').MemoryInfluence;
+    memoryInfluence?: MemoryInfluence;
   }> {
     let ts = timestamp;
     const reputationScore = this.normalizeScore(ensContext?.reputationScore ?? 0.5);
@@ -121,18 +123,16 @@ export class RiskAgent extends BaseAgent {
       timestamp: Date.now(),
     };
 
-    let remoteResponses: unknown[] = [];
-    try {
-      remoteResponses = await this.axlAdapter.broadcast(axlMessage);
-    } catch {
-      remoteResponses = [];
-    }
+    // Parallelize AXL consensus and Memory lookup
+    const [remoteResponses, memoryResult] = await Promise.all([
+      this.axlAdapter.broadcast(axlMessage).catch(() => []),
+      this.applyMemoryInfluence(plan, ts)
+    ]);
 
     const consensus = this.extractConsensus(remoteResponses);
     const approvalRatio = consensus.total > 0 ? consensus.approve / consensus.total : 0.5;
 
     // AXL influence — only applied when peers actually responded
-    // If consensus.total == 0 (no peers), confidenceAdjustment is unchanged
     let axlDecisionImpact: AXLInfluence['decisionImpact'] = 'none';
     if (consensus.total > 0) {
       if (approvalRatio >= 0.7) {
@@ -164,7 +164,6 @@ export class RiskAgent extends BaseAgent {
     trace.push(this.log('review', axlTraceMsg, { axlInfluence }, ts, externalMetadata));
     ts += 10;
 
-    const memoryResult = await this.applyMemoryInfluence(plan, ts);
     riskScore += memoryResult.riskScoreDelta;
     confidenceAdjustment += memoryResult.confidenceDelta;
     if (memoryResult.flag) flags.push(memoryResult.flag);
@@ -298,7 +297,7 @@ export class RiskAgent extends BaseAgent {
     riskScoreDelta: number;
     timestamp: number;
     flag?: string;
-    memoryInfluence?: import('../types').MemoryInfluence;
+    memoryInfluence?: MemoryInfluence;
   }> {
     let ts = timestamp;
     const stats = await this.memoryAdapter.getProtocolStats(plan.protocol);
@@ -377,7 +376,7 @@ export class RiskAgent extends BaseAgent {
     ensTier: ENSTier,
     reputationScore: number,
     flags: string[],
-    memoryInfluence?: import('../types').MemoryInfluence
+    memoryInfluence?: MemoryInfluence
   ): string {
     const risk = plan.riskLevel ?? 'unknown';
     const ensLabel =

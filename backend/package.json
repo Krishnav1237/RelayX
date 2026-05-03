@@ -4,13 +4,17 @@
   "description": "RelayX Backend",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon src/index.ts",
-    "dev:full": "concurrently --names \"BACKEND,AXL\" --prefix-colors \"cyan,yellow\" \"npm:dev\" \"npm:axl:sim\"",
-    "axl:sim": "node scripts/axl-sim-node.js",
-    "axl:node": "node scripts/axl-sim-node.js",
+    "dev": "npm run build && node dist/index.js",
+    "dev:watch": "nodemon --watch src --ext ts --exec \"npm run build && node dist/index.js\"",
+    "dev:full": "concurrently --names \"BACKEND,AXL\" --prefix-colors \"cyan,yellow\" \"npm:dev:watch\" \"npm:axl:sim\"",
+    "axl:sim": "node scripts/axl-sim-node.cjs",
+    "axl:node": "node scripts/axl-sim-node.cjs",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "vitest --run"
+    "test": "vitest --run",
+    "test:transaction": "tsx test-real-transaction.ts",
+    "test:comprehensive": "tsx comprehensive-test.ts",
+    "debug": "tsx debug-backend.ts"
   },
   "repository": {
     "type": "git",
@@ -19,7 +23,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "bugs": {
     "url": "https://github.com/Krishnav1237/RelayX/issues"
   },
@@ -37,7 +41,11 @@
     "@types/node": "^25.6.0",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
+  },
+  "overrides": {
+    "axios": "^1.7.9"
   }
 }

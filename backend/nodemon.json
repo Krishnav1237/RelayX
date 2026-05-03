@@ -1,7 +1,7 @@
 {
   "watch": ["src"],
   "ext": "ts",
-  "exec": "node --max-old-space-size=512 -r ts-node/register src/index.ts",
-  "delay": "1000",
+  "exec": "tsc && node dist/index.js",
+  "delay": "2000",
   "signal": "SIGTERM"
 }

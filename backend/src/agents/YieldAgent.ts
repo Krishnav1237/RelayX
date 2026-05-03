@@ -1,8 +1,8 @@
-import { BaseAgent } from './BaseAgent';
-import { AXLMessage, AgentTrace, YieldOption, YieldThinkResult } from '../types';
-import { AXLAdapter } from '../adapters/AXLAdapter';
-import { YieldDataAdapter } from '../adapters/YieldDataAdapter';
-import { getAgentEnsName } from '../config/agents';
+import { BaseAgent } from './BaseAgent.js';
+import { AXLMessage, AgentTrace, YieldOption, YieldThinkResult } from '../types/index.js';
+import { AXLAdapter } from '../adapters/AXLAdapter.js';
+import { YieldDataAdapter } from '../adapters/YieldDataAdapter.js';
+import { getAgentEnsName } from '../config/agents.js';
 
 interface ProtocolComparison {
   protocol: string;

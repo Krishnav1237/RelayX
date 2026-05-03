@@ -149,8 +149,22 @@ export function IntegrationStatus() {
   const allOk = Object.values(health).every((s) => s.status === 'ok' || s.status === 'loading');
   const anyDown = Object.values(health).some((s) => s.status === 'down');
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('[data-health-dropdown]')) {
+        setExpanded(false);
+      }
+    };
+
+    if (expanded) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [expanded]);
+
   return (
-    <div className="relative">
+    <div className="relative" data-health-dropdown>
       {/* Compact pill trigger */}
       <button
         onClick={() => setExpanded((e) => !e)}

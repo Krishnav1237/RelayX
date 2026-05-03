@@ -13,17 +13,18 @@ import {
   UniswapQuoteResult,
   YieldOption,
   YieldThinkResult,
-} from '../types';
-import { YieldAgent } from '../agents/YieldAgent';
-import { RiskAgent } from '../agents/RiskAgent';
-import { ExecutorAgent } from '../agents/ExecutorAgent';
-import { ENSAdapter } from '../adapters/ENSAdapter';
-import { ZeroGMemoryAdapter } from '../adapters/ZeroGMemoryAdapter';
-import { ReasoningAdapter } from '../adapters/ReasoningAdapter';
+  MemoryInfluence,
+} from '../types/index.js';
+import { YieldAgent } from '../agents/YieldAgent.js';
+import { RiskAgent } from '../agents/RiskAgent.js';
+import { ExecutorAgent } from '../agents/ExecutorAgent.js';
+import { ENSAdapter } from '../adapters/ENSAdapter.js';
+import { ZeroGMemoryAdapter } from '../adapters/ZeroGMemoryAdapter.js';
+import { ReasoningAdapter } from '../adapters/ReasoningAdapter.js';
 import { createPublicClient, http, type Address } from 'viem';
-import { getAgentEnsName, getRequiredAgentNames } from '../config/agents';
-import { getRelayXChain, getRelayXRpcUrls } from '../config/chain';
-import { getApprovalTtlMs } from '../config/security';
+import { getAgentEnsName, getRequiredAgentNames } from '../config/agents.js';
+import { getRelayXChain, getRelayXRpcUrls } from '../config/chain.js';
+import { getApprovalTtlMs } from '../config/security.js';
 
 const DEFAULT_ENS_SOURCES = ['ens.eth', 'nick.eth'] as const;
 const MAX_ENS_SOURCES = 3;
@@ -50,7 +51,7 @@ interface PendingExecution {
   ensReputationScore: number;
   ensInfluence?: ENSInfluence;
   axlInfluence?: AXLInfluence;
-  memoryInfluence?: import('../types').MemoryInfluence;
+  memoryInfluence?: MemoryInfluence;
   decisionImpact: DecisionImpact;
   clampedYield: number;
   clampedRisk: number;
@@ -121,34 +122,32 @@ export class ExecutionService {
   private async resolveENSSources(sourceNames: readonly string[]): Promise<ENSSourceSignal[]> {
     const results = await Promise.all(
       sourceNames.map(async (sourceName) => {
-        let address: string | null = null;
-        let records: Record<string, string> = {};
         try {
-          address = await withTimeout(
-            this.ensAdapter.resolveName(sourceName),
-            ENS_TIMEOUT_MS,
-            `resolveName ${sourceName}`
-          );
+          const [address, records] = await Promise.all([
+            withTimeout(
+              this.ensAdapter.resolveName(sourceName),
+              ENS_TIMEOUT_MS,
+              `resolveName ${sourceName}`
+            ),
+            withTimeout(
+              this.ensAdapter.getTextRecords(sourceName),
+              ENS_TIMEOUT_MS,
+              `getTextRecords ${sourceName}`
+            ).catch(() => ({} as Record<string, string>))
+          ]);
+
+          if (address === null && Object.keys(records).length === 0) return undefined;
+
+          return {
+            name: sourceName,
+            address,
+            records,
+            score: this.computeSourceScore(sourceName, address, records),
+          } satisfies ENSSourceSignal;
         } catch (e) {
           console.error(`[ENS ERROR] ${sourceName} ${e instanceof Error ? e.message : e}`);
+          return undefined;
         }
-        try {
-          records = await withTimeout(
-            this.ensAdapter.getTextRecords(sourceName),
-            ENS_TIMEOUT_MS,
-            `getTextRecords ${sourceName}`
-          );
-        } catch (e) {
-          console.error(`[ENS ERROR] ${sourceName} ${e instanceof Error ? e.message : e}`);
-          records = {};
-        }
-        if (address === null && Object.keys(records).length === 0) return undefined;
-        return {
-          name: sourceName,
-          address,
-          records,
-          score: this.computeSourceScore(sourceName, address, records),
-        } satisfies ENSSourceSignal;
       })
     );
     return results.filter((r): r is ENSSourceSignal => r !== undefined);
@@ -295,7 +294,7 @@ export class ExecutionService {
     let riskConfidence = 0.8;
     let lastEnsInfluence: ENSInfluence | undefined;
     let lastAxlInfluence: AXLInfluence | undefined;
-    let lastMemoryInfluence: import('../types').MemoryInfluence | undefined;
+    let lastMemoryInfluence: MemoryInfluence | undefined;
 
     // Step 2: RiskAgent
     let riskOutput = await riskAgent.review(selectedOption, trace, ts, traceMetadata, ensContext);
@@ -704,7 +703,7 @@ export class ExecutionService {
     let llmExplanation: string | null = null;
     if (this.reasoningAdapter.isEnabled()) {
       const memoryInfluence = (pending as any).memoryInfluence as
-        | import('../types').MemoryInfluence
+        | import('../types/index.js').MemoryInfluence
         | undefined;
 
       // Build context for final explanation
@@ -738,7 +737,7 @@ export class ExecutionService {
     }
 
     const memoryInfluence = (pending as any).memoryInfluence as
-      | import('../types').MemoryInfluence
+      | import('../types/index.js').MemoryInfluence
       | undefined;
     const memoryPart =
       memoryInfluence && memoryInfluence.impact !== 'neutral'

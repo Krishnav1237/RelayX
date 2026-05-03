@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Wallet, Copy, LogOut, Check, ChevronDown } from 'lucide-react';
 import { useWalletStore } from '@/lib/wallet/store';
@@ -11,6 +12,7 @@ export function WalletButton() {
   const { isConnected, address, disconnect, networkType, walletType } = useWalletStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -30,9 +32,14 @@ export function WalletButton() {
     }
   };
 
-  const handleDisconnect = () => {
-    disconnect();
+  const handleDisconnectClick = () => {
+    setIsDisconnectModalOpen(true);
     setIsDropdownOpen(false);
+  };
+
+  const confirmDisconnect = () => {
+    disconnect();
+    setIsDisconnectModalOpen(false);
   };
 
   // Close dropdown when clicking outside
@@ -74,7 +81,8 @@ export function WalletButton() {
   }
 
   return (
-    <div className="relative" data-wallet-dropdown>
+    <>
+      <div className="relative" data-wallet-dropdown>
       {/* Connected Wallet Button */}
       <motion.button
         onClick={() => setIsDropdownOpen(!isDropdownOpen)}
@@ -130,7 +138,7 @@ export function WalletButton() {
 
               {/* Disconnect */}
               <button
-                onClick={handleDisconnect}
+                onClick={handleDisconnectClick}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400"
               >
                 <LogOut className="h-4 w-4" />
@@ -140,6 +148,44 @@ export function WalletButton() {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+      </div>
+
+      {/* Disconnect Confirmation Modal */}
+      {createPortal(
+        <AnimatePresence>
+          {isDisconnectModalOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="w-full max-w-sm rounded-2xl border border-border bg-background p-6 shadow-2xl"
+              >
+                <h3 className="mb-2 text-lg font-semibold text-foreground">Disconnect Wallet</h3>
+                <p className="mb-6 text-sm text-zinc-500 dark:text-zinc-400">
+                  Are you sure you want to disconnect?
+                </p>
+                
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setIsDisconnectModalOpen(false)}
+                    className="flex-1 rounded-xl border border-border bg-background py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDisconnect}
+                    className="flex-1 rounded-xl bg-red-600 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
+                  >
+                    Confirm Disconnect
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
+    </>
   );
 }

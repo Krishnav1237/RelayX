@@ -1,4 +1,4 @@
-import { AgentTrace } from '../types';
+import { AgentTrace } from '../types/index.js';
 
 export abstract class BaseAgent {
   readonly id: string;

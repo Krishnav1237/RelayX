@@ -1,15 +1,9 @@
-import { YieldOption } from '../types';
+import { YieldOption } from '../types/index.js';
 
-const LLM_TIMEOUT_MS = 5000; // Increased from 2000ms to 5000ms
-
-// LLM Provider Configuration
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? 'meta-llama/llama-3.1-8b-instruct:free';
+const LLM_TIMEOUT_MS = 8000;
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL ?? 'llama-3.1-8b-instant';
-
-type LLMProvider = 'openrouter' | 'groq';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -21,26 +15,14 @@ function normalizeConfidence(value: number): number {
 
 export class ReasoningAdapter {
   private enabled: boolean;
-  private provider: LLMProvider | null = null;
 
   constructor() {
-    // Priority: OpenRouter > Groq
-    if (OPENROUTER_API_KEY && OPENROUTER_API_KEY.length > 0) {
+    if (GROQ_API_KEY && GROQ_API_KEY.length > 0) {
       this.enabled = true;
-      this.provider = 'openrouter';
-      console.log(
-        `[ReasoningAdapter] ✓ LLM enabled (provider: OpenRouter, model: ${OPENROUTER_MODEL})`
-      );
-    } else if (GROQ_API_KEY && GROQ_API_KEY.length > 0) {
-      this.enabled = true;
-      this.provider = 'groq';
       console.log(`[ReasoningAdapter] ✓ LLM enabled (provider: Groq, model: ${GROQ_MODEL})`);
     } else {
       this.enabled = false;
-      this.provider = null;
-      console.log(
-        '[ReasoningAdapter] ✗ LLM disabled (no OPENROUTER_API_KEY or GROQ_API_KEY found)'
-      );
+      console.log('[ReasoningAdapter] ✗ LLM disabled (no GROQ_API_KEY found)');
     }
   }
 
@@ -212,74 +194,42 @@ Your response (one sentence only):`;
   }
 
   private async callLLM(prompt: string): Promise<string | null> {
-    if (!this.enabled || !this.provider) return null;
+    if (!this.enabled) return null;
 
-    const model = this.provider === 'openrouter' ? OPENROUTER_MODEL : GROQ_MODEL;
-    console.log(`[ReasoningAdapter] LLM CALL → provider: ${this.provider}, model: ${model}`);
+    console.log(`[ReasoningAdapter] LLM CALL → provider: groq, model: ${GROQ_MODEL}`);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
     try {
-      let response: Response;
-      let requestBody: any;
+      const requestBody = {
+        model: GROQ_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 150,
+        temperature: 0.3,
+      };
 
-      if (this.provider === 'openrouter') {
-        requestBody = {
-          model: OPENROUTER_MODEL,
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: 150,
-          temperature: 0.3,
-        };
+      console.log(
+        `[ReasoningAdapter] → Request: POST https://api.groq.com/openai/v1/chat/completions`
+      );
+      console.log(`[ReasoningAdapter] → Model: ${GROQ_MODEL}`);
 
-        console.log(
-          `[ReasoningAdapter] → Request: POST https://openrouter.ai/api/v1/chat/completions`
-        );
-        console.log(`[ReasoningAdapter] → Model: ${OPENROUTER_MODEL}`);
-
-        response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-            'HTTP-Referer': 'https://github.com/RelayX',
-            'X-Title': 'RelayX DeFi Agent',
-          },
-          body: JSON.stringify(requestBody),
-          signal: controller.signal,
-        });
-      } else if (this.provider === 'groq') {
-        requestBody = {
-          model: GROQ_MODEL,
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: 150,
-          temperature: 0.3,
-        };
-
-        console.log(
-          `[ReasoningAdapter] → Request: POST https://api.groq.com/openai/v1/chat/completions`
-        );
-        console.log(`[ReasoningAdapter] → Model: ${GROQ_MODEL}`);
-
-        response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${GROQ_API_KEY}`,
-          },
-          body: JSON.stringify(requestBody),
-          signal: controller.signal,
-        });
-      } else {
-        return null;
-      }
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${GROQ_API_KEY}`,
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
 
       console.log(`[ReasoningAdapter] ← Response: HTTP ${response.status} ${response.statusText}`);
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unable to read error body');
         console.error(
-          `[ReasoningAdapter] ✗ ${this.provider} HTTP ${response.status}: ${errorText}`
+          `[ReasoningAdapter] ✗ groq HTTP ${response.status}: ${errorText}`
         );
         return null;
       }
@@ -322,12 +272,12 @@ Your response (one sentence only):`;
     } catch (error) {
       if (error instanceof Error) {
         if (error.name === 'AbortError') {
-          console.error(`[ReasoningAdapter] ✗ ${this.provider} call timeout (${LLM_TIMEOUT_MS}ms)`);
+          console.error(`[ReasoningAdapter] ✗ groq call timeout (${LLM_TIMEOUT_MS}ms)`);
         } else {
-          console.error(`[ReasoningAdapter] ✗ ${this.provider} call failed: ${error.message}`);
+          console.error(`[ReasoningAdapter] ✗ groq call failed: ${error.message}`);
         }
       } else {
-        console.error(`[ReasoningAdapter] ✗ ${this.provider} call failed:`, error);
+        console.error(`[ReasoningAdapter] ✗ groq call failed:`, error);
       }
       return null;
     } finally {
