@@ -64,7 +64,9 @@ export class ExecutorAgent extends BaseAgent {
       swapQuote = await this.uniswapAdapter.getQuote(quoteParams);
 
       if (swapQuote && context?.wallet) {
-        const calldata = await this.uniswapAdapter.getSwapCalldata(quoteParams, context.wallet, 50, swapQuote);
+        // Use wider slippage on testnet (5%) vs mainnet (0.5%)
+        const slippageBps = getQuoteChainId() === 11155111 ? 500 : 50;
+        const calldata = await this.uniswapAdapter.getSwapCalldata(quoteParams, context.wallet, slippageBps, swapQuote);
         if (calldata) {
           swapQuote.calldata = calldata;
         }

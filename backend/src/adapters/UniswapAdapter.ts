@@ -14,14 +14,20 @@
  *   3. Cached last result             ← last resort
  */
 
-import { createPublicClient, http, parseUnits, formatUnits } from 'viem';
+import { createPublicClient, http, parseUnits, formatUnits, parseAbi } from 'viem';
 import { mainnet, sepolia } from 'viem/chains';
 import type { UniswapQuoteResult, SwapCalldata } from '../types/index.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const CHAIN_ID = Number(process.env.RELAYX_CHAIN_ID ?? (process.env.RELAYX_CHAIN === 'sepolia' ? 11155111 : 1));
-const IS_SEPOLIA = CHAIN_ID === 11155111;
+// Computed lazily after dotenv loads
+function getChainId(): number {
+  return Number(process.env.RELAYX_CHAIN_ID ?? (process.env.RELAYX_CHAIN === 'sepolia' ? 11155111 : 1));
+}
+
+function isSepolia(): boolean {
+  return getChainId() === 11155111;
+}
 
 // Uniswap v3 QuoterV2 addresses (official deployments)
 const QUOTER_V2_ADDRESS: Record<number, `0x${string}`> = {
@@ -55,8 +61,8 @@ const TOKENS: Record<string, Record<number, `0x${string}`>> = {
   },
 };
 
-// Fee tiers to try (0.05%, 0.3%, 1%)
-const FEE_TIERS = [500, 3000, 10000] as const;
+// Fee tiers to try (0.01%, 0.05%, 0.3%, 1%)
+const FEE_TIERS = [100, 500, 3000, 10000] as const;
 
 // CoinGecko token IDs for fallback
 const COINGECKO_IDS: Record<string, string> = {
@@ -69,33 +75,10 @@ const COINGECKO_IDS: Record<string, string> = {
   STETH: 'staked-ether',
 };
 
-// QuoterV2 ABI — quoteExactInputSingle only
-const QUOTER_V2_ABI = [
-  {
-    name: 'quoteExactInputSingle',
-    type: 'function',
-    stateMutability: 'nonpayable',
-    inputs: [
-      {
-        name: 'params',
-        type: 'tuple',
-        components: [
-          { name: 'tokenIn', type: 'address' },
-          { name: 'tokenOut', type: 'address' },
-          { name: 'amountIn', type: 'uint256' },
-          { name: 'fee', type: 'uint24' },
-          { name: 'sqrtPriceLimitX96', type: 'uint256' },
-        ],
-      },
-    ],
-    outputs: [
-      { name: 'amountOut', type: 'uint256' },
-      { name: 'sqrtPriceX96After', type: 'uint160' },
-      { name: 'initializedTicksCrossed', type: 'uint32' },
-      { name: 'gasEstimate', type: 'uint256' },
-    ],
-  },
-] as const;
+// QuoterV2 ABI — use parseAbi for correct tuple encoding
+const QUOTER_V2_ABI = parseAbi([
+  'function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
+]);
 
 // ─── Quote params ─────────────────────────────────────────────────────────────
 
@@ -128,11 +111,11 @@ export class UniswapAdapter {
   private getViemClient(): ReturnType<typeof createPublicClient> | null {
     if (this.viemClient) return this.viemClient;
     try {
-      const rpcUrl = IS_SEPOLIA
+      const rpcUrl = isSepolia()
         ? (process.env.ALCHEMY_SEPOLIA_RPC_URL ?? process.env.RELAYX_RPC_URL ?? '')
         : (process.env.ALCHEMY_MAINNET_RPC_URL ?? process.env.RELAYX_RPC_URL ?? '');
 
-      const chain = IS_SEPOLIA ? sepolia : mainnet;
+      const chain = isSepolia() ? sepolia : mainnet;
       const transport = rpcUrl ? http(rpcUrl, { timeout: 5000 }) : http(undefined, { timeout: 5000 });
 
       this.viemClient = createPublicClient({ chain, transport });
@@ -161,7 +144,7 @@ export class UniswapAdapter {
   // ── On-chain QuoterV2 ─────────────────────────────────────────────────────
 
   private async fetchOnChainQuote(params: QuoteParams): Promise<UniswapQuoteResult | null> {
-    const chainId = params.chainId ?? CHAIN_ID;
+    const chainId = params.chainId ?? getChainId();
     const quoterAddress = process.env.UNISWAP_QUOTER_V2_ADDRESS as `0x${string}` | undefined
       ?? QUOTER_V2_ADDRESS[chainId];
 
@@ -199,7 +182,7 @@ export class UniswapAdapter {
               tokenOut: tokenOutAddr,
               amountIn,
               fee,
-              sqrtPriceLimitX96: BigInt(0),
+              sqrtPriceLimitX96: 0n,
             },
           ],
         });
@@ -230,7 +213,11 @@ export class UniswapAdapter {
             amountOutRaw: amountOut,
           };
         }
-      } catch {
+      } catch (err) {
+        // Log the specific fee tier failure for debugging
+        const msg = err instanceof Error ? err.message : String(err);
+        const shortMsg = msg.split('\n').slice(0, 3).join(' | ');
+        console.log(`[UniswapAdapter] QuoterV2 fee=${fee}: ${shortMsg}`);
         return null;
       }
       return null;
@@ -300,7 +287,7 @@ export class UniswapAdapter {
         route: `${tokenInKey} → [CoinGecko spot] → ${tokenOutKey}`,
         source: 'coingecko',
         rawAmountOut: String(Math.floor(amountOut * 10 ** decimalsOut)),
-        chainId: params.chainId ?? CHAIN_ID,
+        chainId: params.chainId ?? getChainId(),
         rate: amountOut / amountIn,
       };
     } catch {
@@ -311,7 +298,7 @@ export class UniswapAdapter {
   // ── Public API ────────────────────────────────────────────────────────────
 
   async getQuote(params: QuoteParams): Promise<UniswapQuoteResult | null> {
-    const cacheKey = `${params.tokenIn}:${params.tokenOut}:${params.amount}:${params.chainId ?? CHAIN_ID}`;
+    const cacheKey = `${params.tokenIn}:${params.tokenOut}:${params.amount}:${params.chainId ?? getChainId()}`;
     const cached = this.cache.get(cacheKey);
 
     if (cached && cached.expiresAt > Date.now()) {
@@ -360,7 +347,7 @@ export class UniswapAdapter {
     slippageBps = 50, // 0.5% default slippage
     existingQuote?: UniswapQuoteResult | null
   ): Promise<SwapCalldata | null> {
-    const chainId = params.chainId ?? CHAIN_ID;
+    const chainId = params.chainId ?? getChainId();
     const routerAddress = SWAP_ROUTER_ADDRESS[chainId];
     if (!routerAddress) return null;
 
@@ -416,7 +403,7 @@ export class UniswapAdapter {
     chainId: number;
     quoterAddress: string;
   }> {
-    const chainId = CHAIN_ID;
+    const chainId = getChainId();
     const quoterAddress = QUOTER_V2_ADDRESS[chainId] ?? 'not-configured';
 
     // Quick health check: try a simple ETH→USDC quote
