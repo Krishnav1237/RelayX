@@ -11,6 +11,7 @@ import {
 } from '../types';
 import { AXLAdapter } from '../adapters/AXLAdapter';
 import { ProtocolStats, ZeroGMemoryAdapter } from '../adapters/ZeroGMemoryAdapter';
+import { getAgentEnsName } from '../config/agents';
 
 function normalizeConfidence(value: number): number {
   return Math.round(Math.max(0, Math.min(0.95, value)) * 100) / 100;
@@ -31,7 +32,8 @@ export class RiskAgent extends BaseAgent {
   private axlAdapter = new AXLAdapter();
 
   constructor(private readonly memoryAdapter = new ZeroGMemoryAdapter()) {
-    super('risk.relay.eth', 'risk.relay.eth');
+    const agentName = getAgentEnsName('risk');
+    super(agentName, agentName);
   }
 
   async review(
@@ -129,7 +131,8 @@ export class RiskAgent extends BaseAgent {
     const consensus = this.extractConsensus(remoteResponses);
     const approvalRatio = consensus.total > 0 ? consensus.approve / consensus.total : 0.5;
 
-    // AXL influence — clear thresholds
+    // AXL influence — only applied when peers actually responded
+    // If consensus.total == 0 (no peers), confidenceAdjustment is unchanged
     let axlDecisionImpact: AXLInfluence['decisionImpact'] = 'none';
     if (consensus.total > 0) {
       if (approvalRatio >= 0.7) {
@@ -147,17 +150,17 @@ export class RiskAgent extends BaseAgent {
       isSimulated: false,
     };
 
-    // Task 3: AXL trace — clear about empty vs live
+    // AXL trace — be specific about outcome and reason
     const hasAXLPeers = consensus.total > 0;
     const axlImpactLabel =
       axlDecisionImpact === 'boost'
-        ? '→ boosting confidence'
+        ? ' — boosting confidence'
         : axlDecisionImpact === 'penalty'
-          ? '→ reducing confidence'
+          ? ' — reducing confidence'
           : '';
     const axlTraceMsg = hasAXLPeers
       ? `AXL live peers: ${consensus.approve}/${consensus.total} approved ${axlImpactLabel}`.trim()
-      : 'AXL: no peers available — proceeding with local decision';
+      : 'AXL unavailable — proceeding with local decision (no network influence applied)';
     trace.push(this.log('review', axlTraceMsg, { axlInfluence }, ts, externalMetadata));
     ts += 10;
 
@@ -167,6 +170,47 @@ export class RiskAgent extends BaseAgent {
     if (memoryResult.flag) flags.push(memoryResult.flag);
     ts = memoryResult.timestamp;
     const memoryInfluence = memoryResult.memoryInfluence;
+
+    // Log memory influence to trace
+    if (memoryInfluence?.hasHistory) {
+      const successPercent = Math.round(memoryInfluence.successRate * 100);
+      const memoryMsg =
+        memoryInfluence.impact === 'boosted'
+          ? `Memory: ${memoryInfluence.protocol} has ${successPercent}% success rate across ${memoryInfluence.executionCount} executions -> increasing confidence`
+          : memoryInfluence.impact === 'penalized'
+            ? `Memory: ${memoryInfluence.protocol} has ${successPercent}% success rate across ${memoryInfluence.executionCount} executions -> reducing confidence and increasing risk`
+            : `Memory: ${memoryInfluence.protocol} has ${successPercent}% success rate across ${memoryInfluence.executionCount} executions -> neutral influence`;
+      const influenceMapping = {
+        boosted: 'positive',
+        penalized: 'negative',
+        neutral: 'neutral',
+      } as const;
+      trace.push(
+        this.log(
+          'review',
+          memoryMsg,
+          {
+            memoryInfluence,
+            successRate: memoryInfluence.successRate,
+            executionCount: memoryInfluence.executionCount,
+            influence: influenceMapping[memoryInfluence.impact],
+          },
+          ts,
+          externalMetadata
+        )
+      );
+    } else if (!memoryInfluence?.hasHistory) {
+      trace.push(
+        this.log(
+          'review',
+          'Memory unavailable — proceeding without historical context',
+          { memoryInfluence },
+          ts,
+          externalMetadata
+        )
+      );
+    }
+    ts += 10;
 
     // Decision
     const decision: 'approve' | 'reject' = riskScore >= 35 ? 'reject' : 'approve';

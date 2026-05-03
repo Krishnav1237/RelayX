@@ -21,12 +21,12 @@ import { ENSAdapter } from '../adapters/ENSAdapter';
 import { ZeroGMemoryAdapter } from '../adapters/ZeroGMemoryAdapter';
 import { ReasoningAdapter } from '../adapters/ReasoningAdapter';
 import { createPublicClient, http, type Address } from 'viem';
-import { mainnet } from 'viem/chains';
+import { getAgentEnsName, getRequiredAgentNames } from '../config/agents';
+import { getRelayXChain, getRelayXRpcUrls } from '../config/chain';
+import { getApprovalTtlMs } from '../config/security';
 
-const SYSTEM_AGENT = 'system.relay.eth';
 const DEFAULT_ENS_SOURCES = ['ens.eth', 'nick.eth'] as const;
 const MAX_ENS_SOURCES = 3;
-const DEFAULT_MAINNET_RPC_URL = 'https://rpc.ankr.com/eth';
 const TRUSTED_ENS_SCORES: Record<string, number> = {
   'vitalik.eth': 0.95,
   'ens.eth': 0.93,
@@ -59,7 +59,6 @@ interface PendingExecution {
 }
 
 const ENS_TIMEOUT_MS = 4000;
-const APPROVAL_TTL_MS = 5 * 60 * 1000;
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -74,7 +73,18 @@ function normalizeConfidence(value: number): number {
   return Math.round(Math.max(0, Math.min(1, value)) * 100) / 100;
 }
 
+function getConfiguredEnsSources(env: NodeJS.ProcessEnv = process.env): string[] {
+  const configured = env.RELAYX_DEFAULT_ENS_SOURCES?.split(',')
+    .map((source) => source.trim().toLowerCase())
+    .filter((source) => source.length > 0);
+  return configured && configured.length > 0 ? [...new Set(configured)] : [...DEFAULT_ENS_SOURCES];
+}
+
 export class ExecutionService {
+  private readonly systemAgent: string;
+  private readonly requiredAgentNames: string[];
+  private readonly approvalTtlMs: number;
+  private readonly reverseLookupClient: ReturnType<typeof createPublicClient>;
   private yieldAgent: YieldAgent;
   private riskAgent: RiskAgent;
   private executorAgent: ExecutorAgent;
@@ -82,12 +92,22 @@ export class ExecutionService {
   private memoryAdapter: ZeroGMemoryAdapter;
   private reasoningAdapter: ReasoningAdapter;
   private pendingExecutions = new Map<string, PendingExecution>();
-  private reverseLookupClient = createPublicClient({
-    chain: mainnet,
-    transport: http(process.env.ALCHEMY_MAINNET_RPC_URL ?? DEFAULT_MAINNET_RPC_URL),
-  });
 
   constructor(memoryAdapter = new ZeroGMemoryAdapter()) {
+    const chainConfig = getRelayXChain();
+    const rpcUrls = getRelayXRpcUrls();
+    const rpcUrl = rpcUrls[0];
+    if (rpcUrl === undefined) {
+      throw new Error('No RPC URL configured for ENS reverse lookup');
+    }
+
+    this.systemAgent = getAgentEnsName('system');
+    this.requiredAgentNames = getRequiredAgentNames();
+    this.approvalTtlMs = getApprovalTtlMs();
+    this.reverseLookupClient = createPublicClient({
+      chain: chainConfig.chain,
+      transport: http(rpcUrl),
+    });
     this.memoryAdapter = memoryAdapter;
     this.yieldAgent = new YieldAgent();
     this.riskAgent = new RiskAgent(memoryAdapter);
@@ -211,7 +231,7 @@ export class ExecutionService {
       request.context?.demo === true ? new RiskAgent(memoryAdapter) : this.riskAgent;
     const traceMetadata = request.context?.demo === true ? { demo: true } : undefined;
 
-    const defaultSources = [...DEFAULT_ENS_SOURCES];
+    const defaultSources = getConfiguredEnsSources();
     const userENS = this.isEnsName(request.context?.ens)
       ? this.normalizeEnsName(request.context.ens)
       : null;
@@ -223,7 +243,7 @@ export class ExecutionService {
     const dynamicSources: string[] = [];
     if (userENS) dynamicSources.push(userENS);
     if (walletENS) dynamicSources.push(walletENS);
-    if (!userENS && !walletENS) dynamicSources.push('vitalik.eth');
+    if (!userENS && !walletENS) dynamicSources.push(this.systemAgent);
 
     const finalENSSources = this.uniqEnsSources([...dynamicSources, ...defaultSources]).slice(
       0,
@@ -245,10 +265,14 @@ export class ExecutionService {
 
     // System: start
     trace.push({
-      agent: SYSTEM_AGENT,
+      agent: this.systemAgent,
       step: 'start',
       message: `Processing intent: "${request.intent}" — ENS reputation: ${ensContext.reputationScore.toFixed(2)}`,
-      metadata: { ensSourcesUsed: finalENSSources, reputationScore: ensContext.reputationScore },
+      metadata: {
+        ensSourcesUsed: finalENSSources,
+        reputationScore: ensContext.reputationScore,
+        chain: getRelayXChain().name,
+      },
       timestamp: ts,
     });
     ts += 10;
@@ -283,7 +307,7 @@ export class ExecutionService {
     lastMemoryInfluence = riskOutput.memoryInfluence;
     if (lastMemoryInfluence) {
       trace.push({
-        agent: 'risk.relay.eth',
+        agent: riskAgent.name,
         step: 'memory',
         message: lastMemoryInfluence.hasHistory
           ? `Memory: ${lastMemoryInfluence.protocol} → ${lastMemoryInfluence.impact === 'boosted' ? 'strong' : lastMemoryInfluence.impact === 'penalized' ? 'weak' : 'neutral'} history (${lastMemoryInfluence.impact})`
@@ -311,7 +335,7 @@ export class ExecutionService {
           : `AXL peer consensus triggered retry (approval ratio: ${riskOutput.axlInfluence.approvalRatio})`;
 
       trace.push({
-        agent: SYSTEM_AGENT,
+        agent: this.systemAgent,
         step: 'retry',
         message: `Retrying: ${reasonForRetry}`,
         metadata: {
@@ -359,7 +383,7 @@ export class ExecutionService {
       lastMemoryInfluence = riskOutput.memoryInfluence;
       if (lastMemoryInfluence) {
         trace.push({
-          agent: 'risk.relay.eth',
+          agent: riskAgent.name,
           step: 'memory',
           message: lastMemoryInfluence.hasHistory
             ? `Memory: ${lastMemoryInfluence.protocol} → ${lastMemoryInfluence.impact === 'boosted' ? 'strong' : lastMemoryInfluence.impact === 'penalized' ? 'weak' : 'neutral'} history (${lastMemoryInfluence.impact})`
@@ -377,7 +401,7 @@ export class ExecutionService {
 
     // System: final plan
     trace.push({
-      agent: SYSTEM_AGENT,
+      agent: this.systemAgent,
       step: 'evaluate',
       message: `Final plan: ${finalPlan.protocol} at ${finalPlan.apy}% APY`,
       metadata: {
@@ -404,7 +428,7 @@ export class ExecutionService {
     };
 
     trace.push({
-      agent: SYSTEM_AGENT,
+      agent: this.systemAgent,
       step: 'approval_required',
       message: `Approval required before executing ${finalPlan.protocol}`,
       metadata: {
@@ -483,7 +507,7 @@ export class ExecutionService {
 
       if (llmExplanation) {
         trace.push({
-          agent: SYSTEM_AGENT,
+          agent: this.systemAgent,
           step: 'explain',
           message: `Final LLM explanation: ${llmExplanation}`,
           metadata: { llmGenerated: true, isFinalExplanation: true },
@@ -507,16 +531,10 @@ export class ExecutionService {
 
     // --- Section 3: Trace assertions ---
     const agentsSeen = new Set(trace.map((t) => t.agent));
-    const requiredAgents = [
-      'system.relay.eth',
-      'yield.relay.eth',
-      'risk.relay.eth',
-      'executor.relay.eth',
-    ];
-    for (const agent of requiredAgents) {
+    for (const agent of this.requiredAgentNames) {
       if (!agentsSeen.has(agent)) {
         trace.push({
-          agent: SYSTEM_AGENT,
+          agent: this.systemAgent,
           step: 'normalize',
           message: `Trace normalized: missing entries from ${agent}`,
           timestamp: ts,
@@ -538,7 +556,7 @@ export class ExecutionService {
 
     if (!isValidResult) {
       trace.push({
-        agent: SYSTEM_AGENT,
+        agent: this.systemAgent,
         step: 'normalize',
         message: 'Execution completed with degraded validation safeguards',
         timestamp: ts,
@@ -560,7 +578,7 @@ export class ExecutionService {
 
     const approval: ExecutionApproval = {
       id: randomUUID(),
-      expiresAt: Date.now() + APPROVAL_TTL_MS,
+      expiresAt: Date.now() + this.approvalTtlMs,
     };
 
     this.cleanupPendingExecutions();
@@ -632,7 +650,7 @@ export class ExecutionService {
     let ts = (trace[trace.length - 1]?.timestamp ?? Date.now()) + 10;
 
     trace.push({
-      agent: SYSTEM_AGENT,
+      agent: this.systemAgent,
       step: 'approval',
       message: `User approved execution for ${pending.finalPlan.protocol}`,
       metadata: { approvalId, protocol: pending.finalPlan.protocol },
@@ -656,7 +674,7 @@ export class ExecutionService {
     const finalResult = executorOutput.result;
 
     trace.push({
-      agent: SYSTEM_AGENT,
+      agent: this.systemAgent,
       step: 'execute',
       message: `Execution completed: deposited to ${finalResult.protocol}`,
       metadata: { status: finalResult.status, protocol: finalResult.protocol },
@@ -708,7 +726,7 @@ export class ExecutionService {
 
       if (llmExplanation) {
         trace.push({
-          agent: SYSTEM_AGENT,
+          agent: this.systemAgent,
           step: 'explain',
           message: `Final LLM explanation: ${llmExplanation}`,
           metadata: { llmGenerated: true, isFinalExplanation: true },
@@ -808,7 +826,7 @@ export class ExecutionService {
       scoredOptions.push({
         option,
         successRate: stats.successRate,
-        avgConfidence: stats.avgConfidence,
+        avgConfidence: stats.avgConfidence ?? 0,
         executionCount: stats.executionCount,
       });
     }
@@ -832,7 +850,7 @@ export class ExecutionService {
       ...(externalMetadata ?? {}),
     };
     trace.push({
-      agent: SYSTEM_AGENT,
+      agent: this.systemAgent,
       step: 'retry',
       message: `Memory retry preference: selected ${selected.option.protocol} using ${Math.round(selected.successRate * 100)}% success rate across ${selected.executionCount} executions`,
       metadata,
@@ -863,7 +881,7 @@ export class ExecutionService {
     const unavailable = memoryAdapter.getLastUnavailableReason();
     if (unavailable) {
       trace.push({
-        agent: SYSTEM_AGENT,
+        agent: this.systemAgent,
         step: 'memory',
         message: 'Memory unavailable — execution history not persisted',
         metadata: { memoryAvailable: false, reason: unavailable },
@@ -873,7 +891,7 @@ export class ExecutionService {
     }
 
     trace.push({
-      agent: SYSTEM_AGENT,
+      agent: this.systemAgent,
       step: 'memory',
       message: `Memory stored execution outcome for ${finalPlan.protocol}`,
       metadata: {
@@ -897,7 +915,7 @@ export class ExecutionService {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     trace.push({
-      agent: SYSTEM_AGENT,
+      agent: this.systemAgent,
       step: 'evaluate',
       message: `Yield data unavailable: ${errorMessage}`,
       metadata: { status: 'failed', reason: errorMessage },

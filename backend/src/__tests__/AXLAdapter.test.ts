@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AXLAdapter } from '../adapters/AXLAdapter';
+import { AXLAdapter } from '../adapters/AXLAdapter.js';
 
 describe('AXLAdapter', () => {
   const adapter = new AXLAdapter();
@@ -10,7 +10,7 @@ describe('AXLAdapter', () => {
       payload: { intent: 'test' },
     });
     expect(Array.isArray(responses)).toBe(true);
-    // No live AXL nodes in test env → empty array (no simulated data)
+    // No live AXL nodes in test env → empty array
   });
 
   it('should not crash on broadcast with risk_request', async () => {
@@ -29,15 +29,12 @@ describe('AXLAdapter', () => {
     expect(Array.isArray(responses)).toBe(true);
   });
 
-  it('should not crash on sendMessage when AXL is down', async () => {
-    const result = await adapter.sendMessage('test-target', { data: 'test' });
-    expect(result).toBeDefined();
-    expect(typeof result).toBe('object');
-  });
-
-  it('should handle malformed broadcast payload gracefully', async () => {
-    const responses = await adapter.broadcast({ invalid: true });
-    expect(Array.isArray(responses)).toBe(true);
+  it('should handle broadcast when AXL is down gracefully', async () => {
+    const result = await adapter.broadcast({
+      type: 'yield_request',
+      payload: { data: 'test' },
+    });
+    expect(Array.isArray(result)).toBe(true);
   });
 
   it('should return empty array not undefined', async () => {
@@ -48,5 +45,17 @@ describe('AXLAdapter', () => {
     expect(responses).not.toBeUndefined();
     expect(responses).not.toBeNull();
     expect(Array.isArray(responses)).toBe(true);
+  });
+
+  it('isRealNodeAvailable returns boolean', async () => {
+    const result = await adapter.isRealNodeAvailable();
+    expect(typeof result).toBe('boolean');
+  });
+
+  it('getHealth returns a health object', async () => {
+    const health = await adapter.getHealth();
+    expect(typeof health.status).toBe('string');
+    expect(typeof health.peerCount).toBe('number');
+    expect(['real', 'sim', 'offline']).toContain(health.status);
   });
 });

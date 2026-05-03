@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { ThemeToggle } from './theme-toggle';
 import { WalletButton } from './wallet-button';
+import { IntegrationStatus } from './integration-status';
 import { Terminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -136,6 +137,7 @@ export function Navbar() {
           </nav>
 
           <div className="flex shrink-0 items-center gap-2">
+            <IntegrationStatus />
             <WalletButton />
             <ThemeToggle />
           </div>

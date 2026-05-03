@@ -16,10 +16,10 @@ describe('Verification Scenarios', () => {
 
     // All 4 agents must appear
     const agents = new Set(r.trace.map((t) => t.agent));
-    expect(agents.has('system.relay.eth')).toBe(true);
-    expect(agents.has('yield.relay.eth')).toBe(true);
-    expect(agents.has('risk.relay.eth')).toBe(true);
-    expect(agents.has('executor.relay.eth')).toBe(true);
+    expect(agents.has('system.relayx.eth')).toBe(true);
+    expect(agents.has('yield.relayx.eth')).toBe(true);
+    expect(agents.has('risk.relayx.eth')).toBe(true);
+    expect(agents.has('executor.relayx.eth')).toBe(true);
   });
 
   it('NO AXL: still works, clean trace', async () => {

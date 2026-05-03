@@ -15,6 +15,8 @@ export interface ExecutionResult {
   status: 'pending_approval' | 'success' | 'failed';
   attempt?: number;
   swap?: UniswapQuoteResult;
+  /** Indicates whether the swap was prepared (awaiting signature) or executed on-chain */
+  executionMode?: 'prepared' | 'executed';
 }
 
 export interface UniswapQuoteResult {
@@ -22,8 +24,12 @@ export interface UniswapQuoteResult {
   priceImpact: number;
   gasEstimate: string;
   route: string;
-  source: 'uniswap' | 'coingecko' | 'cache';
+  source: 'uniswap' | 'uniswap-v3-quoter' | 'coingecko' | 'cache';
   lastUpdatedAt?: number;
+  rawAmountOut?: string;
+  chainId?: number;
+  fee?: number;
+  rate?: number;
 }
 
 export type ENSTier = 'strong' | 'neutral' | 'weak';
@@ -129,9 +135,18 @@ export interface ENSReputationContext {
 }
 
 export interface AXLMessage {
-  from: string;
-  to: string;
+  from?: string;
+  to?: string;
   type: 'yield_request' | 'risk_request' | 'execution_signal';
   payload: Record<string, unknown>;
-  timestamp: number;
+  timestamp?: number;
+}
+
+export interface ProtocolStats {
+  protocol: string;
+  successRate: number;
+  executionCount: number;
+  avgApy?: number;
+  avgConfidence?: number;
+  lastUsed?: number;
 }

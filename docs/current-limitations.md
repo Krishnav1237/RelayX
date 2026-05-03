@@ -16,37 +16,37 @@ Known constraints and workarounds.
 
 **Issue**: ENS text records may be stale (not real-time).
 
-**Why**: Caching (5-minute TTL) prevents excessive network calls.
+**Why**: Caching prevents excessive network calls.
 
 **Impact**: Reputation scores reflect recent-ish (not current) ENS state.
 
-**Workaround**: Set a shorter cache TTL or always fetch fresh.
+**Control**: Set `ENS_CACHE_TTL_MS` to shorten or disable the cache (`0` disables freshness reuse).
 
 ### 3. Approval Expires
 
-**Issue**: Approval ID valid for only 5 minutes.
+**Issue**: Approval ID is short lived (default: 5 minutes).
 
 **Why**: Security: Stale approvals shouldn't be executed without re-analysis.
 
-**Impact**: User must execute within 5 minutes or re-request.
+**Impact**: User must execute within the configured window or re-request.
 
-**Workaround**: Increase `APPROVAL_TTL_MS` in `ExecutionService.ts` (not recommended).
+**Control**: Set `APPROVAL_TTL_MS` in the backend environment. Values are bounded between 30 seconds and 30 minutes.
 
-### 4. Single Chain (Ethereum Mainnet)
+### 4. Chain Scope
 
-**Issue**: Only Ethereum mainnet supported.
+**Current**: ENS resolution and wallet reverse lookup support Ethereum mainnet and Sepolia via `RELAYX_CHAIN=mainnet|sepolia`.
 
-**Why**: ENS, Uniswap, DefiLlama data are mainnet-specific.
+**Remaining limitation**: DefiLlama yield discovery is still filtered to Ethereum market data by default, and live Uniswap API quotes are only used on mainnet. In Sepolia demos, RelayX uses live DefiLlama yield data and CoinGecko price fallback without submitting transactions.
 
-**Workaround**: Extend adapters for other chains (Polygon, Arbitrum, etc.).
+**Control**: Set `DEFILLAMA_CHAIN` for another DefiLlama chain label, and add token metadata before enabling live quotes outside mainnet.
 
 ### 5. Limited Yield Assets
 
-**Issue**: Only detects ETH, USDC, USDT, DAI, WETH, WBTC, STETH.
+**Issue**: Built-in detection covers ETH, USDC, USDT, DAI, WETH, WBTC, STETH.
 
-**Why**: Asset extraction is hardcoded.
+**Current**: Additional symbols can be added with `YIELD_SUPPORTED_ASSETS`. Longer symbols are matched first so `STETH` is not mistaken for `ETH`.
 
-**Workaround**: Add more assets to `YieldAgent.extractAsset()`.
+**Remaining limitation**: New symbols still need matching DefiLlama pools and, for quotes, token metadata.
 
 ### 6. No Portfolio Optimization
 
@@ -61,26 +61,26 @@ Known constraints and workarounds.
 ### ENSAdapter
 
 - **Fallback RPC may be slow**: Public RPCs are rate-limited.
-  - Workaround: Set `ALCHEMY_MAINNET_RPC_URL`
+  - Control: Set `ALCHEMY_MAINNET_RPC_URL`, `ALCHEMY_SEPOLIA_RPC_URL`, or `RELAYX_RPC_URL`
 
-- **Text records incomplete**: Only fetches 4 keys (description, url, com.twitter, com.github).
-  - Workaround: Extend `getTextRecords()` to fetch more keys.
+- **Text record scope is configured by env**: Defaults to description, url, com.twitter, com.github.
+  - Control: Set `ENS_TEXT_RECORD_KEYS=description,url,avatar,email,...`
 
 ### YieldDataAdapter
 
 - **DefiLlama may be unavailable**: Network errors, API changes.
   - Workaround: Implement local caching or mirror.
 
-- **Only Ethereum yields**: Other chains not fetched.
-  - Workaround: Extend adapter for other chains.
+- **Ethereum yield default**: Other DefiLlama chains require `DEFILLAMA_CHAIN`.
+  - Control: Set `DEFILLAMA_CHAIN=Arbitrum` or another DefiLlama chain label after validating risk assumptions.
 
 ### UniswapAdapter
 
 - **Uniswap API may timeout**: Network issues.
   - Fallback: Uses CoinGecko prices (slower but works).
 
-- **No slippage protection**: Quote doesn't include slippage limits.
-  - Workaround: Add slippage tolerance to quote.
+- **No transaction slippage protection**: RelayX prepares quotes only; it does not submit swaps.
+  - Workaround: Add signer-driven execution with explicit slippage bounds if RelayX becomes a transaction bot.
 
 ### AXLAdapter
 
@@ -128,13 +128,13 @@ Known constraints and workarounds.
 
 ## Data Limitations
 
-### 1. No Protocol Metadata
+### 1. Limited Protocol Metadata
 
-**Issue**: Only protocol name + APY; no TVL, audits, insurance.
+**Current**: Protocol name, APY, risk level, chain, pool ID, source, and TVL are included when DefiLlama provides them.
 
-**Why**: Scope limited to yield + risk.
+**Remaining limitation**: Audits, insurance, exploit history, and protocol-specific risk APIs are not integrated.
 
-**Workaround**: Extend to fetch from Defillama or DeFi Score.
+**Workaround**: Extend risk inputs with audit/insurance feeds or protocol-native risk APIs.
 
 ### 2. No Historical Volatility
 
@@ -162,13 +162,13 @@ Known constraints and workarounds.
 
 **Workaround**: Parallelize calls (already done) or cache aggressively.
 
-### 2. No Query Caching Across Requests
+### 2. No Durable Query Cache
 
-**Issue**: Each user request re-fetches ENS + yield data.
+**Current**: ENS, yield, and quote adapters keep in-memory caches across requests in the running backend process.
 
-**Why**: No cross-request cache (only within-request).
+**Remaining limitation**: Cache is process-local and disappears on restart or horizontal scaling.
 
-**Workaround**: Add Redis cache layer.
+**Workaround**: Add Redis or another shared cache layer.
 
 ### 3. Max 2 Retry Attempts
 
@@ -180,13 +180,13 @@ Known constraints and workarounds.
 
 ## Security Considerations
 
-### 1. No Input Validation (Extreme)
+### 1. Limited Input Validation
 
-**Issue**: Intent string is not validated; could be very long.
+**Current**: API requests require a non-empty string intent and enforce `MAX_INTENT_LENGTH` (default: 1000).
 
-**Why**: Intended flexibility; LLM would handle any intent.
+**Remaining limitation**: Semantic prompt-injection filtering is not implemented because core decisions are deterministic and do not require an LLM.
 
-**Mitigation**: Add length limits or prompt injection filters.
+**Mitigation**: Add prompt-injection filters before enabling LLM-driven actions.
 
 ### 2. No API Authentication
 
@@ -196,13 +196,13 @@ Known constraints and workarounds.
 
 **Mitigation**: Add API key or OAuth if needed.
 
-### 3. No Rate Limiting
+### 3. In-Memory Rate Limiting Only
 
-**Issue**: No rate limits on backend.
+**Current**: Backend has a simple in-memory limiter (`RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`, `RATE_LIMIT_ENABLED=false` to disable locally).
 
-**Why**: Not implemented.
+**Remaining limitation**: Limits are per process and are not shared across deployments.
 
-**Mitigation**: Add middleware (express-rate-limit).
+**Mitigation**: Use an edge gateway, Redis-backed limiter, or platform rate limits in production.
 
 ### 4. Approval IDs Are UUIDs
 
@@ -212,7 +212,21 @@ Known constraints and workarounds.
 
 **Mitigation**: None needed; UUID v4 is safe.
 
-## Known Issues
+## Known Issues (All Current Issues Are Known & Tracked)
+
+### ✅ RESOLVED: Memory Influence Trace Entries
+
+**Status**: FIXED (May 2026)
+**What was**: Memory influence on risk decisions wasn't logged to trace
+**Now**: Memory stats clearly show in trace with success rates
+**Reference**: `docs/bug-fixes.md` - Bug #1
+
+### ✅ RESOLVED: Demo Mode Memory Protocol Names
+
+**Status**: FIXED (May 2026)
+**What was**: Demo memory used 'Morpho Blue' but YieldAgent selected 'Morpho'
+**Now**: Protocol names match correctly across all adapters
+**Reference**: `docs/bug-fixes.md` - Bug #2
 
 ### Issue: Confidence Score > 0.95
 
@@ -302,6 +316,14 @@ backend/
 │   │   ├── AXLAdapter.ts                  # AXL broadcast + response validation
 │   │   ├── ZeroGMemoryAdapter.ts          # Protocol history + in-memory store
 │   │   └── ReasoningAdapter.ts            # Optional LLM explanations
+│   │
+│   ├── config/
+│   │   ├── agents.ts                      # RelayX ENS subdomain identities
+│   │   ├── chain.ts                       # Mainnet/Sepolia + RPC selection
+│   │   └── security.ts                    # Approval TTL, intent, rate-limit bounds
+│   │
+│   ├── middleware/
+│   │   └── rateLimit.ts                   # In-memory API rate limiter
 │   │
 │   ├── types/
 │   │   └── index.ts                       # TypeScript interfaces (ExecutionRequest, etc.)
@@ -640,11 +662,11 @@ Example customization:
 private buildPrompt(context: any): string {
   return `
     You are a financial advisor. Explain why this yield strategy was chosen.
-    
+
     Protocol: ${context.selectedProtocol}
     APY: ${context.apy}%
     Risk: ${context.riskLevel}
-    
+
     Provide a professional recommendation for the user.
   `;
 }

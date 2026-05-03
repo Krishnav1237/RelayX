@@ -18,8 +18,25 @@ cd ../frontend && npm install
 **Backend** (`backend/.env`):
 
 ```bash
-# Required for ENS resolution (Alchemy recommended, fallback to public RPC)
+# Chain and RPC for ENS resolution (Alchemy recommended, public fallback available)
+RELAYX_CHAIN=mainnet
 ALCHEMY_MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+ALCHEMY_SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+RELAYX_RPC_URL=
+
+# RelayX agent identities and ENS source defaults
+RELAYX_AGENT_ENS_ROOT=relayx.eth
+RELAYX_DEFAULT_ENS_SOURCES=system.relayx.eth,ens.eth,nick.eth
+
+# Safety controls
+APPROVAL_TTL_MS=300000
+MAX_INTENT_LENGTH=1000
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX_REQUESTS=120
+
+# ENS controls
+ENS_CACHE_TTL_MS=300000
+ENS_TEXT_RECORD_KEYS=description,url,com.twitter,com.github
 
 # AXL node URL (default: localhost:3005)
 AXL_BASE_URL=http://localhost:3005
@@ -30,6 +47,11 @@ GROQ_API_KEY=gsk-...
 
 # Optional: Uniswap API (fallback to CoinGecko)
 UNISWAP_API_KEY=...
+UNISWAP_QUOTE_CHAIN_ID=
+
+# Optional: yield discovery controls
+YIELD_SUPPORTED_ASSETS=ETH,USDC,USDT,DAI,WETH,WBTC,STETH
+DEFILLAMA_CHAIN=Ethereum
 
 # Optional: 0G Memory storage
 ZEROG_MEMORY_KV_URL=...
@@ -151,8 +173,12 @@ Response includes `debug` object with:
 Backend logs important milestones:
 
 ```
+[BOOT] Chain: Ethereum Mainnet (1)
+[BOOT] Agent ENS root: relayx.eth
 [BOOT] ENS RPC: configured
 [BOOT] AXL base: http://localhost:3005
+[BOOT] Approval TTL: 300000ms
+[BOOT] Max intent length: 1000
 [CONTROLLER] Request received
 [ENS] Resolving: vitalik.eth
 [EXEC] ENS resolution complete: 0.85
@@ -180,14 +206,14 @@ trace.forEach(entry => {
 
 Key steps:
 
-- **system.relay.eth / start** → ENS context built
-- **yield.relay.eth / analyze** → Intent understood
-- **yield.relay.eth / evaluate** → Options evaluated
-- **risk.relay.eth / evaluate** → Risk checked
-- **risk.relay.eth / approve** or **reject** → Decision made
-- **system.relay.eth / retry** → Retry triggered (if needed)
-- **executor.relay.eth / quote** → Swap quote fetched
-- **executor.relay.eth / execute** → Deposit executed
+- **system.relayx.eth / start** → ENS context built
+- **yield.relayx.eth / analyze** → Intent understood
+- **yield.relayx.eth / evaluate** → Options evaluated
+- **risk.relayx.eth / evaluate** → Risk checked
+- **risk.relayx.eth / approve** or **reject** → Decision made
+- **system.relayx.eth / retry** → Retry triggered (if needed)
+- **executor.relayx.eth / quote** → Swap quote fetched
+- **executor.relayx.eth / execute** → Deposit executed
 
 ### 4. Demo Mode
 
@@ -207,6 +233,25 @@ Demo uses seeded memory:
 - Morpho: 42% success rate → rejected
 - Aave V3: 92% success rate → approved on retry
 
+### 5. Sepolia ENS Agent Demo
+
+For testnet demos, register or configure RelayX agent subdomains on Sepolia:
+
+- `system.relayx.eth`
+- `yield.relayx.eth`
+- `risk.relayx.eth`
+- `executor.relayx.eth`
+
+Then run the backend with:
+
+```bash
+RELAYX_CHAIN=sepolia
+RELAYX_AGENT_ENS_ROOT=relayx.eth
+ALCHEMY_SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+```
+
+ENS resolution and wallet reverse lookup will use Sepolia. Yield data still comes from DefiLlama market data and quote fallback still uses CoinGecko, so the demo remains safe and deterministic without on-chain deposits.
+
 ## Common Issues
 
 ### Issue: ENS resolution hangs
@@ -214,8 +259,8 @@ Demo uses seeded memory:
 **Symptom**: Request times out, no trace entries after `start` step.
 
 **Fix**:
-1. Check `ALCHEMY_MAINNET_RPC_URL` is set
-2. Verify RPC endpoint is accessible: `curl https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY`
+1. Check `RELAYX_CHAIN` and the matching RPC env (`ALCHEMY_MAINNET_RPC_URL` or `ALCHEMY_SEPOLIA_RPC_URL`)
+2. Verify RPC endpoint is accessible: `curl -I https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY`
 3. Check backend logs for `[ENS TIMEOUT]`
 4. ENS failures are graceful; request should still complete
 
@@ -313,7 +358,12 @@ CMD ["npm", "run", "start"]
 Set via deployment platform (Vercel, Railway, AWS Lambda, etc.):
 
 - `ALCHEMY_MAINNET_RPC_URL`
+- `ALCHEMY_SEPOLIA_RPC_URL` (for `RELAYX_CHAIN=sepolia`)
+- `RELAYX_CHAIN`
+- `RELAYX_AGENT_ENS_ROOT`
 - `AXL_BASE_URL` (point to remote AXL node)
+- `MAX_INTENT_LENGTH`
+- `RATE_LIMIT_MAX_REQUESTS`
 - `OPENROUTER_API_KEY` (if using LLM)
 - `UNISWAP_API_KEY` (if using Uniswap)
 - `ZEROG_MEMORY_KV_URL` (if using 0G)
@@ -346,4 +396,3 @@ When making changes:
 - [Backend Design](./backend.md) — Agent/adapter internals
 - [API Reference](./api-reference.md) — Endpoint schemas
 - [Current Limitations](./current-limitations.md) — Known issues
-

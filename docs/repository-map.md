@@ -24,6 +24,8 @@ backend/
 │   ├── orchestrator/          # ExecutionService
 │   ├── agents/                # YieldAgent, RiskAgent, ExecutorAgent
 │   ├── adapters/              # ENS, AXL, Yield, Uniswap, Memory, LLM
+│   ├── config/                # Chain, agent identity, safety config
+│   ├── middleware/            # API middleware such as rate limiting
 │   ├── types/                 # TypeScript interfaces
 │   └── __tests__/             # Full test suite
 ├── scripts/
@@ -72,6 +74,10 @@ docs/
 | backend/src/agents/ExecutorAgent.ts | Execution |
 | backend/src/adapters/ENSAdapter.ts | ENS resolution |
 | backend/src/adapters/AXLAdapter.ts | AXL network |
+| backend/src/config/chain.ts | Mainnet/Sepolia and RPC configuration |
+| backend/src/config/agents.ts | RelayX ENS subdomain identities |
+| backend/src/config/security.ts | Approval TTL, intent bounds, rate-limit config |
+| backend/src/middleware/rateLimit.ts | In-memory API rate limiter |
 | frontend/app/page.tsx | Request form |
 | frontend/app/dashboard/page.tsx | Execution monitor |
 | frontend/lib/execution.ts | API normalization |

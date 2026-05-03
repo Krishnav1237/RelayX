@@ -88,10 +88,10 @@ describe('Hardening: Trace consistency', () => {
     const r = await service.execute({ intent: 'get best yield on ETH' });
 
     const agents = new Set(r.trace.map((t) => t.agent));
-    expect(agents.has('system.relay.eth')).toBe(true);
-    expect(agents.has('yield.relay.eth')).toBe(true);
-    expect(agents.has('risk.relay.eth')).toBe(true);
-    expect(agents.has('executor.relay.eth')).toBe(true);
+    expect(agents.has('system.relayx.eth')).toBe(true);
+    expect(agents.has('yield.relayx.eth')).toBe(true);
+    expect(agents.has('risk.relayx.eth')).toBe(true);
+    expect(agents.has('executor.relayx.eth')).toBe(true);
   });
 
   it('no empty messages or steps', async () => {

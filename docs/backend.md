@@ -17,7 +17,7 @@ Core responsibility: Orchestrate agents, manage state, handle retries.
 3. Run RiskAgent → approve/reject
 4. If rejected and attempt < 2 → retry
 5. Pre-execute quote via ExecutorAgent
-6. Return pending approval (5 min TTL)
+6. Return pending approval (default 5 min TTL, configurable with `APPROVAL_TTL_MS`)
 
 #### `confirmExecution(approvalId: string): Promise<ExecutionResponse>`
 
@@ -31,6 +31,13 @@ Core responsibility: Orchestrate agents, manage state, handle retries.
 Shortcut: calls `analyze()` then `confirmExecution()` automatically.
 
 ## Agents
+
+Agent trace identities are generated from `RELAYX_AGENT_ENS_ROOT` and default to RelayX subdomains:
+
+- `system.relayx.eth`
+- `yield.relayx.eth`
+- `risk.relayx.eth`
+- `executor.relayx.eth`
 
 ### YieldAgent
 
@@ -122,8 +129,8 @@ high       │ reject   │ reject      │ reject
 
 **Memory Influence**:
 
-- High success rate (≥ 0.7) → boost confidence
-- Low success rate (< 0.5) → penalize, signal in retry
+- High success rate (> 0.9) → boost confidence by `+0.05`
+- Low success rate (< 0.6) → reduce confidence by `-0.05` and add `+10` risk score
 - No history → neutral
 
 **Confidence Range**: 0.0–0.95
@@ -198,11 +205,13 @@ async getTextRecords(name: string): Promise<Record<string, string>>
 **Features**:
 
 - Viem client with RPC fallback (Alchemy → Ankr → public)
-- 5-minute cache TTL
-- 4000ms timeout per call
+- Mainnet/Sepolia selection via `RELAYX_CHAIN`
+- Configurable cache TTL via `ENS_CACHE_TTL_MS` (default 5 minutes)
+- Configurable text keys via `ENS_TEXT_RECORD_KEYS`
+- ExecutionService wraps ENS work with 4000ms timeout; each adapter RPC attempt is bounded
 - Returns null/empty on timeout/error
 
-**Text Records Fetched**: description, url, com.twitter, com.github
+**Default Text Records Fetched**: description, url, com.twitter, com.github
 
 ### YieldDataAdapter
 
@@ -219,7 +228,7 @@ async getYieldOptions(asset: string): Promise<YieldOption[]>
 **Features**:
 
 - DefiLlama `/pools` endpoint
-- Filter by asset, chain (Ethereum)
+- Filter by asset and DefiLlama chain label (`DEFILLAMA_CHAIN`, default `Ethereum`)
 - Mark source: "defillama" (live) or "cache"
 - Return empty array if no data
 
@@ -235,9 +244,12 @@ async getYieldOptions(asset: string): Promise<YieldOption[]>
 async getQuote(params: {
   tokenIn: string,
   tokenOut: string,
-  amount: string
+  amount: string,
+  chainId?: number
 }): Promise<UniswapQuoteResult | null>
 ```
+
+Live Uniswap API quotes are only attempted on mainnet token metadata. Sepolia/testnet demos keep the quote step functional through CoinGecko market-data fallback.
 
 **Features**:
 

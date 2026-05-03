@@ -1,5 +1,6 @@
 import { createPublicClient, http } from 'viem';
-import { mainnet } from 'viem/chains';
+import { normalize } from 'viem/ens';
+import { getRelayXChain, getRelayXRpcUrls } from '../config/chain';
 
 interface ENSCacheEntry {
   address: string | null;
@@ -7,14 +8,9 @@ interface ENSCacheEntry {
   timestamp: number;
 }
 
-const PUBLIC_RPC_ENDPOINTS = ['https://rpc.ankr.com/eth'] as const;
-const RPC_ENDPOINTS = [process.env.ALCHEMY_MAINNET_RPC_URL, ...PUBLIC_RPC_ENDPOINTS].filter(
-  (rpc): rpc is string => typeof rpc === 'string' && rpc.trim().length > 0
-);
-const ENS_RECORD_KEYS = ['description', 'url', 'com.twitter', 'com.github'] as const;
-const CACHE_DURATION_MS = 5 * 60 * 1000;
+const DEFAULT_ENS_RECORD_KEYS = ['description', 'url', 'com.twitter', 'com.github'] as const;
+const DEFAULT_CACHE_DURATION_MS = 5 * 60 * 1000;
 const ENS_TIMEOUT_MS = 2000;
-const RPC_ATTEMPT_TIMEOUT_MS = Math.max(1, Math.floor(ENS_TIMEOUT_MS / RPC_ENDPOINTS.length));
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -26,12 +22,24 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 }
 
 export class ENSAdapter {
-  private readonly rpcClients = RPC_ENDPOINTS.map((rpc) => ({
+  private readonly chainConfig = getRelayXChain();
+  private readonly rpcEndpoints = getRelayXRpcUrls();
+  private readonly cacheDurationMs = readBoundedInteger(
+    process.env.ENS_CACHE_TTL_MS,
+    DEFAULT_CACHE_DURATION_MS,
+    0,
+    60 * 60_000
+  );
+  private readonly recordKeys = getRecordKeys();
+  private readonly rpcAttemptTimeoutMs = Math.max(
+    1,
+    Math.floor(ENS_TIMEOUT_MS / Math.max(1, this.rpcEndpoints.length))
+  );
+  private readonly rpcClients = this.rpcEndpoints.map((rpc) => ({
     rpc,
-    client: createPublicClient({ chain: mainnet, transport: http(rpc) }),
+    client: createPublicClient({ chain: this.chainConfig.chain, transport: http(rpc) }),
   }));
 
-  private readonly client = this.rpcClients[0]!.client;
   private cache: Record<string, ENSCacheEntry> = {};
   private addressFetchedAt: Record<string, number> = {};
   private recordsFetchedAt: Record<string, number> = {};
@@ -87,7 +95,7 @@ export class ENSAdapter {
 
     const records: Record<string, string> = {};
     const recordEntries = await Promise.all(
-      ENS_RECORD_KEYS.map(async (key) => {
+      this.recordKeys.map(async (key) => {
         try {
           const value = await this.withRpcFallback<string | null>(
             cacheKey,
@@ -117,7 +125,11 @@ export class ENSAdapter {
   }
 
   private getCacheKey(name: string): string {
-    return name.trim().toLowerCase();
+    try {
+      return normalize(name.trim().toLowerCase());
+    } catch {
+      return '';
+    }
   }
 
   private isValidEnsName(name: unknown): name is string {
@@ -126,7 +138,7 @@ export class ENSAdapter {
 
   private isFresh(timestamp: number | undefined): boolean {
     if (timestamp === undefined) return false;
-    return Date.now() - timestamp < CACHE_DURATION_MS;
+    return Date.now() - timestamp < this.cacheDurationMs;
   }
 
   private async withRpcFallback<T>(
@@ -134,17 +146,14 @@ export class ENSAdapter {
     label: string,
     fn: (client: ReturnType<typeof createPublicClient>) => Promise<T>
   ): Promise<T | null> {
-    const clientsToTry = [
-      { rpc: RPC_ENDPOINTS[0], client: this.client },
-      ...this.rpcClients.slice(1),
-    ];
+    const clientsToTry = this.rpcClients;
 
     for (let index = 0; index < clientsToTry.length; index++) {
       const { rpc, client } = clientsToTry[index]!;
       try {
         return await withTimeout(
           fn(client),
-          RPC_ATTEMPT_TIMEOUT_MS,
+          this.rpcAttemptTimeoutMs,
           `${label}(${name}) via ${rpc}`
         );
       } catch (error) {
@@ -158,4 +167,22 @@ export class ENSAdapter {
     }
     return null;
   }
+}
+
+function getRecordKeys(): string[] {
+  const configured = process.env.ENS_TEXT_RECORD_KEYS?.split(',')
+    .map((key) => key.trim())
+    .filter((key) => key.length > 0);
+  return configured && configured.length > 0 ? [...new Set(configured)] : [...DEFAULT_ENS_RECORD_KEYS];
+}
+
+function readBoundedInteger(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
 }

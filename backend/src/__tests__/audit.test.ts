@@ -29,10 +29,10 @@ describe('Audit S1: Full Pipeline', () => {
 
     // All agents present
     const agents = new Set(r.trace.map((t) => t.agent));
-    expect(agents.has('system.relay.eth')).toBe(true);
-    expect(agents.has('yield.relay.eth')).toBe(true);
-    expect(agents.has('risk.relay.eth')).toBe(true);
-    expect(agents.has('executor.relay.eth')).toBe(true);
+    expect(agents.has('system.relayx.eth')).toBe(true);
+    expect(agents.has('yield.relayx.eth')).toBe(true);
+    expect(agents.has('risk.relayx.eth')).toBe(true);
+    expect(agents.has('executor.relayx.eth')).toBe(true);
 
     // Timestamps increasing
     for (let i = 1; i < r.trace.length; i++) {

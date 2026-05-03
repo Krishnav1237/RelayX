@@ -29,14 +29,14 @@ describe('ExecutionService', () => {
 
   it('should use only ENS-style agent names', async () => {
     const r = await service.execute({ intent: 'get best yield on ETH' });
-    const valid = ['yield.relay.eth', 'risk.relay.eth', 'executor.relay.eth', 'system.relay.eth'];
+    const valid = ['yield.relayx.eth', 'risk.relayx.eth', 'executor.relayx.eth', 'system.relayx.eth'];
     for (const e of r.trace) expect(valid).toContain(e.agent);
   });
 
   it('should have trace starting with system start', async () => {
     const r = await service.execute({ intent: 'get best yield on ETH' });
     expect(r.trace[0]!.step).toBe('start');
-    expect(r.trace[0]!.agent).toBe('system.relay.eth');
+    expect(r.trace[0]!.agent).toBe('system.relayx.eth');
   });
 
   it('should have confidence breakdown in debug', async () => {

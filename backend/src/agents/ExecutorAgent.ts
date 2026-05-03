@@ -1,7 +1,9 @@
-import { BaseAgent } from './BaseAgent';
-import { AXLMessage, AgentTrace, ExecutionResult, UniswapQuoteResult, YieldOption } from '../types';
-import { AXLAdapter } from '../adapters/AXLAdapter';
-import { UniswapAdapter } from '../adapters/UniswapAdapter';
+import { BaseAgent } from './BaseAgent.js';
+import { AXLMessage, AgentTrace, ExecutionResult, UniswapQuoteResult, YieldOption } from '../types/index.js';
+import { AXLAdapter } from '../adapters/AXLAdapter.js';
+import { UniswapAdapter } from '../adapters/UniswapAdapter.js';
+import { getAgentEnsName } from '../config/agents.js';
+import { getQuoteChainId } from '../config/chain.js';
 
 function normalizeConfidence(value: number): number {
   return Math.round(Math.max(0, Math.min(1, value)) * 100) / 100;
@@ -21,7 +23,8 @@ export class ExecutorAgent extends BaseAgent {
   private uniswapAdapter = new UniswapAdapter();
 
   constructor() {
-    super('executor.relay.eth', 'executor.relay.eth');
+    const agentName = getAgentEnsName('executor');
+    super(agentName, agentName);
   }
 
   async quote(
@@ -37,7 +40,12 @@ export class ExecutorAgent extends BaseAgent {
       this.log(
         'quote',
         `Fetching swap route from Uniswap for ${tokenPair.tokenIn} -> ${tokenPair.tokenOut}`,
-        { tokenIn: tokenPair.tokenIn, tokenOut: tokenPair.tokenOut, protocol: plan.protocol },
+        {
+          tokenIn: tokenPair.tokenIn,
+          tokenOut: tokenPair.tokenOut,
+          protocol: plan.protocol,
+          chainId: getQuoteChainId(),
+        },
         ts,
         externalMetadata
       )
@@ -50,41 +58,32 @@ export class ExecutorAgent extends BaseAgent {
         tokenIn: tokenPair.tokenIn,
         tokenOut: tokenPair.tokenOut,
         amount: '1000000000000000000', // 1 ETH in wei
+        chainId: getQuoteChainId(),
       });
     } catch {
       swapQuote = null;
     }
 
-    if (swapQuote) {
       trace.push(
         this.log(
           'quote',
-          `Swap route found via ${swapQuote.source}: estimated ${swapQuote.amountOut} ${tokenPair.tokenOut} output (price impact ${swapQuote.priceImpact}%)`,
-          {
-            amountOut: swapQuote.amountOut,
-            priceImpact: swapQuote.priceImpact,
-            gasEstimate: swapQuote.gasEstimate,
-            route: swapQuote.route,
-            source: swapQuote.source,
-            lastUpdatedAt: swapQuote.lastUpdatedAt,
-          },
+          swapQuote
+            ? `Swap route found via ${swapQuote.source}: estimated ${swapQuote.amountOut} ${tokenPair.tokenOut} output (price impact: ${swapQuote.priceImpact.toFixed(2)}%)`
+            : '[UNISWAP] Fallback used — on-chain quote unavailable, proceeding without swap pre-quote',
+          swapQuote
+            ? {
+                amountOut: swapQuote.amountOut,
+                priceImpact: swapQuote.priceImpact,
+                gasEstimate: swapQuote.gasEstimate,
+                route: swapQuote.route,
+                source: swapQuote.source,
+              }
+            : { uniswapAvailable: false },
           ts,
           externalMetadata
         )
       );
       ts += 10;
-    } else {
-      trace.push(
-        this.log(
-          'quote',
-          'Uniswap unavailable - proceeding without a pre-execution swap quote',
-          { uniswapAvailable: false },
-          ts,
-          externalMetadata
-        )
-      );
-      ts += 10;
-    }
 
     return { swapQuote, nextTimestamp: ts };
   }
@@ -159,20 +158,24 @@ export class ExecutorAgent extends BaseAgent {
       status: 'success',
       attempt,
       swap: swapQuote ?? undefined,
+      executionMode: 'prepared',
     };
 
+    // Trace: clearly state what happened and that user signature is required
+    const finalMsg = swapQuote
+      ? `Prepared swap transaction via Uniswap (awaiting user signature) — estimated ${swapQuote.amountOut} ${tokenPair.tokenOut} via ${swapQuote.route}`
+      : `Prepared deposit on ${plan.protocol} at ${plan.apy}% APY (no swap quote available — will use direct deposit)`;
     trace.push(
       this.log(
         'execute',
-        swapQuote
-          ? `Deposit successful via ${swapQuote.route}. Estimated output: ${swapQuote.amountOut} ${tokenPair.tokenOut}. Funds now generating yield at ${plan.apy}% APY.`
-          : `Deposit successful. Funds now generating yield at ${plan.apy}% APY.`,
+        finalMsg,
         {
           protocol: result.protocol,
           apy: result.apy,
           action: result.action,
           attempt,
           confidence,
+          executionMode: 'prepared',
           hasSwapQuote: swapQuote !== null,
         },
         ts,
@@ -208,8 +211,8 @@ export class ExecutorAgent extends BaseAgent {
       this.log(
         'execute',
         hasAXLPeers
-          ? `AXL live peers: ${remoteResponses.length} acknowledged execution`
-          : 'AXL: no peers available',
+          ? `AXL live peers: ${remoteResponses.length} peer(s) acknowledged execution signal`
+          : 'AXL unavailable — proceeding with local decision (no network influence)',
         { peersContacted: remoteResponses.length },
         ts,
         externalMetadata

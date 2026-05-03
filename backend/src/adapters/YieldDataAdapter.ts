@@ -1,4 +1,5 @@
 import { YieldOption } from '../types';
+import { getRelayXChain } from '../config/chain';
 
 const DEFILLAMA_URL = 'https://yields.llama.fi/pools';
 const FETCH_TIMEOUT_MS = 15000;
@@ -44,6 +45,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export class YieldDataAdapter {
   private cache = new Map<string, CacheEntry>();
+  private readonly defiLlamaChain =
+    process.env.DEFILLAMA_CHAIN?.trim() || getRelayXChain().defiLlamaChain;
 
   async getYieldOptions(asset: string): Promise<YieldOption[]> {
     const key = asset.trim().toUpperCase();
@@ -106,7 +109,7 @@ export class YieldDataAdapter {
 
       if (!project.trim()) continue;
       if (!this.symbolMatchesAsset(symbol, asset)) continue;
-      if (chain !== 'Ethereum') continue;
+      if (chain.toLowerCase() !== this.defiLlamaChain.toLowerCase()) continue;
       if (tvlUsd < 1_000_000) continue;
       if (apy <= 0 || apy > 50) continue;
 

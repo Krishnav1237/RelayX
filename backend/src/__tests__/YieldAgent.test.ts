@@ -5,8 +5,8 @@ import { AgentTrace } from '../types';
 describe('YieldAgent', () => {
   it('should have ENS-style identity', () => {
     const agent = new YieldAgent();
-    expect(agent.name).toBe('yield.relay.eth');
-    expect(agent.id).toBe('yield.relay.eth');
+    expect(agent.name).toBe('yield.relayx.eth');
+    expect(agent.id).toBe('yield.relayx.eth');
   });
 
   it('should select highest APY on attempt 1', async () => {
@@ -65,7 +65,7 @@ describe('YieldAgent', () => {
     await agent.think('get best yield on ETH', 1, trace, 1000);
 
     for (const entry of trace) {
-      expect(entry.agent).toBe('yield.relay.eth');
+      expect(entry.agent).toBe('yield.relayx.eth');
     }
   });
 
@@ -93,5 +93,14 @@ describe('YieldAgent', () => {
 
     const dataEntry = trace.find((t) => t.metadata?.asset !== undefined);
     expect(dataEntry?.metadata?.asset).toBe('USDC');
+  });
+
+  it('should prefer longer token symbols before ETH substrings', async () => {
+    const agent = new YieldAgent();
+    const trace: AgentTrace[] = [];
+    await agent.think('find best STETH yield', 1, trace, 1000);
+
+    const dataEntry = trace.find((t) => t.metadata?.asset !== undefined);
+    expect(dataEntry?.metadata?.asset).toBe('STETH');
   });
 });

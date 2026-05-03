@@ -5,7 +5,7 @@ import { AgentTrace, YieldOption } from '../types';
 describe('RiskAgent', () => {
   it('should have ENS-style identity', () => {
     const agent = new RiskAgent();
-    expect(agent.name).toBe('risk.relay.eth');
+    expect(agent.name).toBe('risk.relayx.eth');
   });
 
   it('should reject Morpho (4.6%, medium risk) — triggers retry path', async () => {
@@ -135,7 +135,7 @@ describe('RiskAgent', () => {
     const trace: AgentTrace[] = [];
     await agent.review({ protocol: 'Aave', apy: 4.2, riskLevel: 'low' }, trace, 1000);
     for (const entry of trace) {
-      expect(entry.agent).toBe('risk.relay.eth');
+      expect(entry.agent).toBe('risk.relayx.eth');
     }
   });
 });

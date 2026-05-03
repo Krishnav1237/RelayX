@@ -5,8 +5,8 @@ import { AgentTrace, YieldOption } from '../types';
 describe('ExecutorAgent', () => {
   it('should have ENS-style identity', () => {
     const agent = new ExecutorAgent();
-    expect(agent.name).toBe('executor.relay.eth');
-    expect(agent.id).toBe('executor.relay.eth');
+    expect(agent.name).toBe('executor.relayx.eth');
+    expect(agent.id).toBe('executor.relayx.eth');
   });
 
   it('should return success result with correct fields', async () => {
@@ -36,7 +36,16 @@ describe('ExecutorAgent', () => {
     expect(typeof result.swap!.priceImpact).toBe('number');
     expect(result.swap!.gasEstimate.length).toBeGreaterThan(0);
     expect(result.swap!.route.length).toBeGreaterThan(0);
-    expect(['uniswap', 'coingecko', 'cache']).toContain(result.swap!.source);
+    expect(['uniswap', 'uniswap-v3-quoter', 'coingecko', 'cache']).toContain(result.swap!.source);
+  });
+
+  it('should have executionMode set to prepared', async () => {
+    const agent = new ExecutorAgent();
+    const trace: AgentTrace[] = [];
+    const plan: YieldOption = { protocol: 'Aave', apy: 4.2, riskLevel: 'low' };
+
+    const { result } = await agent.execute(plan, trace, 1, 1000);
+    expect(result.executionMode).toBe('prepared');
   });
 
   it('should include Uniswap trace entries', async () => {
@@ -70,7 +79,10 @@ describe('ExecutorAgent', () => {
 
     await agent.execute(plan, trace, 1, 1000);
 
-    const narrativeEntry = trace.find((t) => t.message.includes('Deposit successful'));
+    // Trace should mention prepared state or deposit
+    const narrativeEntry = trace.find(
+      (t) => t.message.includes('Prepared') || t.message.includes('Deposit successful')
+    );
     expect(narrativeEntry).toBeDefined();
   });
 
@@ -94,7 +106,7 @@ describe('ExecutorAgent', () => {
     await agent.execute(plan, trace, 1, 1000);
 
     for (const entry of trace) {
-      expect(entry.agent).toBe('executor.relay.eth');
+      expect(entry.agent).toBe('executor.relayx.eth');
     }
   });
 

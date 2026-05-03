@@ -5,7 +5,9 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon src/index.ts",
-    "axl:node": "node scripts/axl-dev-node.js",
+    "dev:full": "concurrently --names \"BACKEND,AXL\" --prefix-colors \"cyan,yellow\" \"npm:dev\" \"npm:axl:sim\"",
+    "axl:sim": "node scripts/axl-sim-node.js",
+    "axl:node": "node scripts/axl-sim-node.js",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest --run"
@@ -23,7 +25,10 @@
   },
   "homepage": "https://github.com/Krishnav1237/RelayX#readme",
   "dependencies": {
+    "@0gfoundation/0g-storage-ts-sdk": "^1.2.8",
+    "concurrently": "^9.2.1",
     "dotenv": "^17.4.2",
+    "ethers": "^6.13.1",
     "express": "^5.2.1",
     "viem": "^2.48.4"
   },

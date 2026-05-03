@@ -2,6 +2,8 @@
 
 > Autonomous DeFi agent system for intelligent yield farming with deterministic decision-making, on-chain reputation signals, and cross-node collaboration.
 
+**Status**: Backend hardened for RelayX agent ENS subdomains, Sepolia ENS demos, 0G memory, and deterministic approval flow. Tests: 135/135 passing.
+
 ## Overview
 
 RelayX is a production-ready agent orchestration framework built with:
@@ -9,7 +11,7 @@ RelayX is a production-ready agent orchestration framework built with:
 - **YieldAgent**: Analyzes user intent and fetches live yield data from DefiLlama
 - **RiskAgent**: Evaluates protocols against deterministic risk thresholds
 - **ExecutorAgent**: Prepares and executes deposits with swap quoting
-- **ENS Reputation Layer**: Uses real on-chain ENS data (vitalik.eth, ens.eth, nick.eth) as reputation signals
+- **ENS Reputation Layer**: Uses real on-chain ENS data and RelayX agent subdomains as reputation signals
 - **AXL Integration**: Enables cross-node agent collaboration via a local infrastructure node
 - **Deterministic Logic**: Core decisions are rule-based (no LLM required); optional LLM for explanations
 - **Full Trace & Memory**: Complete execution history with confidence metrics and protocol success tracking
@@ -67,7 +69,7 @@ Starts AXL mock/relay node on `http://localhost:3005` (configurable via `AXL_BAS
 3. **RiskAgent** assesses risk vs. APY → approves or rejects
 4. **Retry (if needed)** → YieldAgent selects second option, RiskAgent reviews
 5. **Pre-execution quote** → ExecutorAgent fetches Uniswap swap quote
-6. **Pending approval** → Response includes `approval.id` (5 min TTL)
+6. **Pending approval** → Response includes `approval.id` (default 5 min TTL, configurable)
 7. **User reviews** → `POST /execute/confirm` with approval ID
 8. **ExecutorAgent** executes → returns final result with full trace
 
@@ -77,20 +79,40 @@ Starts AXL mock/relay node on `http://localhost:3005` (configurable via `AXL_BAS
 
 | Feature | Details |
 |---------|---------|
-| **ENS Signals** | Resolves vitalik.eth, ens.eth, nick.eth to derive reputation score (0.0–1.0) → affects RiskAgent confidence |
+| **ENS Signals** | Resolves user ENS, wallet primary ENS, and RelayX/default ENS sources to derive reputation score (0.0–1.0) → affects RiskAgent confidence |
 | **Memory Layer** | Tracks protocol success rates; influences retry selection and confidence adjustments |
 | **AXL Broadcast** | YieldAgent broadcasts yield requests; RiskAgent requests consensus; ExecutorAgent signals results |
 | **Deterministic** | All decisions use rule-based logic; no randomness; same input → same output |
 | **Timeout Protection** | ENS calls, yield data, swaps all have timeout guards; failures degrade gracefully |
-| **Caching** | ENS (5 min TTL), yield data, swap quotes all cached to reduce redundant calls |
+| **Caching** | ENS (configurable TTL), yield data, swap quotes all cached to reduce redundant calls |
+| **Testnet Demo Mode** | `RELAYX_CHAIN=sepolia` switches ENS resolution/reverse lookup to Sepolia while keeping yield/price data live |
 
 ## Configuration
 
 ### Backend Environment
 
 ```bash
-# RPC for ENS resolution (Alchemy recommended)
+# Chain and RPC for ENS resolution (Alchemy recommended)
+RELAYX_CHAIN=mainnet
 ALCHEMY_MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+ALCHEMY_SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_API_KEY
+RELAYX_RPC_URL=
+
+# RelayX agent ENS identities
+RELAYX_AGENT_ENS_ROOT=relayx.eth
+RELAYX_DEFAULT_ENS_SOURCES=system.relayx.eth,ens.eth,nick.eth
+
+# Safety and cache controls
+APPROVAL_TTL_MS=300000
+MAX_INTENT_LENGTH=1000
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX_REQUESTS=120
+ENS_CACHE_TTL_MS=300000
+ENS_TEXT_RECORD_KEYS=description,url,com.twitter,com.github
+
+# Yield discovery
+YIELD_SUPPORTED_ASSETS=ETH,USDC,USDT,DAI,WETH,WBTC,STETH
+DEFILLAMA_CHAIN=Ethereum
 
 # AXL infrastructure node URL
 AXL_BASE_URL=http://localhost:3005
@@ -180,6 +202,18 @@ curl -X POST http://localhost:3001/analyze \
     }
   }'
 ```
+
+### Sepolia ENS Demo
+
+Register or configure agent subdomains such as `system.relayx.eth`, `yield.relayx.eth`, `risk.relayx.eth`, and `executor.relayx.eth` on Sepolia, then run:
+
+```bash
+RELAYX_CHAIN=sepolia
+RELAYX_AGENT_ENS_ROOT=relayx.eth
+ALCHEMY_SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_API_KEY
+```
+
+ENS resolution and wallet reverse lookup use Sepolia. DefiLlama yield data and CoinGecko quote fallback remain live market-data inputs so the demo stays deterministic and does not submit on-chain transactions.
 
 ### Two-Step Approval Flow
 

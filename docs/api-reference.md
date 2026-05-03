@@ -16,7 +16,7 @@ Server health check.
 
 **Response** (200):
 ```json
-{ "status": "ok" }
+{ "status": "ok", "chain": "mainnet", "chainId": 1 }
 ```
 
 ### GET /axl-health
@@ -52,7 +52,8 @@ ENS resolution capability.
 ```json
 {
   "status": "ok" | "fallback",
-  "addressResolved": boolean
+  "addressResolved": boolean,
+  "chain": "mainnet" | "sepolia"
 }
 ```
 
@@ -81,10 +82,10 @@ Analyze user intent, return pending approval.
   "intent": "find best yield on ETH",
   "trace": [
     {
-      "agent": "system.relay.eth",
+      "agent": "system.relayx.eth",
       "step": "start",
       "message": "Processing intent...",
-      "metadata": { "ensSourcesUsed": [...], "reputationScore": 0.85 },
+      "metadata": { "ensSourcesUsed": [...], "reputationScore": 0.85, "chain": "mainnet" },
       "timestamp": 1234567890
     },
     ...
@@ -162,6 +163,14 @@ Analyze user intent, return pending approval.
 }
 ```
 
+Intent length is bounded by `MAX_INTENT_LENGTH` (default: 1000). Overlong requests return:
+
+```json
+{
+  "error": "Invalid input: intent must be 1000 characters or fewer"
+}
+```
+
 ### POST /execute
 
 Analyze + confirm execution in one call.
@@ -188,7 +197,7 @@ Execute approved plan.
   "trace": [
     ...
     {
-      "agent": "executor.relay.eth",
+      "agent": "executor.relayx.eth",
       "step": "execute",
       "message": "Deposit successful via ETH → USDC. Estimated output: 1234.56 USDC...",
       "metadata": { "protocol": "Aave", "apy": "4.2%", "status": "success" },
@@ -232,7 +241,7 @@ Execute approved plan.
 
 ```typescript
 interface ExecutionRequest {
-  intent: string;                    // Required, non-empty
+  intent: string;                    // Required, non-empty, default max 1000 chars
   context?: {
     ens?: string;                    // e.g., "vitalik.eth"
     wallet?: string;                 // e.g., "0x..."
@@ -259,7 +268,7 @@ interface ExecutionResult {
 
 ```typescript
 interface AgentTrace {
-  agent: string;                     // e.g., "yield.relay.eth"
+  agent: string;                     // e.g., "yield.relayx.eth"
   step: string;                      // e.g., "analyze", "evaluate"
   message: string;
   metadata?: Record<string, unknown>;
@@ -323,13 +332,14 @@ User's natural language request. Examples:
 - "get best USDC yield"
 - "find highest APY"
 
-Asset is extracted automatically (ETH, USDC, USDT, DAI, WETH, WBTC, STETH).
+Asset is extracted automatically (ETH, USDC, USDT, DAI, WETH, WBTC, STETH by default). Extend with `YIELD_SUPPORTED_ASSETS`.
 
 ### context.ens (Optional)
 
 User's ENS name to influence reputation signal. Examples:
 - "vitalik.eth"
 - "alice.eth"
+- "yield.relayx.eth" (RelayX agent subdomain)
 
 If provided, becomes primary ENS source (highest priority).
 
@@ -351,12 +361,12 @@ Include debug metadata in response (confidence breakdown, raw decisions, etc.).
 
 ## Approval Flow
 
-1. `/analyze` returns `approval.id` and `approval.expiresAt` (5 minutes)
+1. `/analyze` returns `approval.id` and `approval.expiresAt` (default 5 minutes)
 2. User reviews `summary.explanation` and `trace`
 3. User calls `/execute/confirm` with `approvalId`
 4. Response includes final execution status
 
-Approval IDs expire after 5 minutes if not confirmed.
+Approval IDs expire after `APPROVAL_TTL_MS` if not confirmed. The backend bounds this value between 30 seconds and 30 minutes.
 
 ---
 
@@ -410,4 +420,3 @@ const result = await fetch('http://localhost:3001/execute/confirm', {
 
 console.log(result.final_result.status); // "success"
 ```
-

@@ -2,6 +2,7 @@ import { BaseAgent } from './BaseAgent';
 import { AXLMessage, AgentTrace, YieldOption, YieldThinkResult } from '../types';
 import { AXLAdapter } from '../adapters/AXLAdapter';
 import { YieldDataAdapter } from '../adapters/YieldDataAdapter';
+import { getAgentEnsName } from '../config/agents';
 
 interface ProtocolComparison {
   protocol: string;
@@ -23,7 +24,8 @@ export class YieldAgent extends BaseAgent {
   private yieldDataAdapter = new YieldDataAdapter();
 
   constructor() {
-    super('yield.relay.eth', 'yield.relay.eth');
+    const agentName = getAgentEnsName('yield');
+    super(agentName, agentName);
   }
 
   async think(
@@ -202,7 +204,13 @@ export class YieldAgent extends BaseAgent {
 
   private extractAsset(intent: string): string {
     const upper = intent.toUpperCase();
-    const tokens = ['ETH', 'USDC', 'USDT', 'DAI', 'WETH', 'WBTC', 'STETH'];
+    const configuredTokens = (process.env.YIELD_SUPPORTED_ASSETS ?? '')
+      .split(',')
+      .map((token) => token.trim().toUpperCase())
+      .filter((token) => token.length > 0);
+    const tokens = [
+      ...new Set(['ETH', 'USDC', 'USDT', 'DAI', 'WETH', 'WBTC', 'STETH', ...configuredTokens]),
+    ].sort((a, b) => b.length - a.length);
     for (const token of tokens) {
       if (upper.includes(token)) return token;
     }

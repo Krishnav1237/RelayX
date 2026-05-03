@@ -17,7 +17,7 @@ describe('UniswapAdapter', () => {
     expect(quote!.priceImpact).toBeGreaterThanOrEqual(0);
     expect(quote!.gasEstimate.length).toBeGreaterThan(0);
     expect(quote!.route.length).toBeGreaterThan(0);
-    expect(['uniswap', 'coingecko', 'cache']).toContain(quote!.source);
+    expect(['uniswap', 'uniswap-v3-quoter', 'coingecko', 'cache']).toContain(quote!.source);
   });
 
   it('should return a quote for WETH→DAI', async () => {
@@ -69,5 +69,17 @@ describe('UniswapAdapter', () => {
     expect(quote).not.toBeNull();
     expect(quote!.priceImpact).toBeGreaterThanOrEqual(0);
     expect(quote!.priceImpact).toBeLessThanOrEqual(100);
+  });
+
+  it('should keep testnet demos quoteable through market-data fallback', async () => {
+    const quote = await adapter.getQuote({
+      tokenIn: 'ETH',
+      tokenOut: 'USDC',
+      amount: '1000000000000000000',
+      chainId: 11155111,
+    });
+
+    expect(quote).not.toBeNull();
+    expect(['coingecko', 'cache']).toContain(quote!.source);
   });
 });

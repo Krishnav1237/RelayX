@@ -20,6 +20,7 @@ import { AppBackground } from '@/components/app-background';
 import { ExecutionFloatingPanel } from '@/components/execution-floating-panel';
 import { Navbar } from '@/components/navbar';
 import { useWalletStore } from '@/lib/wallet';
+import { switchToSepolia, formatAddress } from '@/lib/wallet-actions';
 import {
   buildTerminalStatusEvents,
   loadExecutionSession,
@@ -481,15 +482,29 @@ export default function Dashboard() {
                   <Wallet className="h-4 w-4 text-emerald-500" />
                   Connected Wallet
                 </h3>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
                     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">
                       Network: {networkType === 'ethereum' ? 'Ethereum' : 'Solana'}
                     </div>
-                    <div className="font-mono text-sm text-foreground break-all">{address}</div>
+                    <div className="font-mono text-xs text-foreground break-all">
+                      {formatAddress(address, 6)}
+                    </div>
                   </div>
+
+                  {/* Switch to Sepolia for Uniswap quotes */}
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Required Network</p>
+                    <button
+                      onClick={async () => { try { await switchToSepolia(); } catch (e) { console.error(e); } }}
+                      className="w-full text-left rounded-lg border border-border bg-accent/30 px-3 py-2 text-xs text-zinc-400 transition-colors hover:border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-400"
+                    >
+                      ⬡ Switch to Sepolia — Uniswap quotes &amp; signing
+                    </button>
+                  </div>
+
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Your wallet is ready for execution
+                    Ready for on-chain execution. 0G storage is handled server-side.
                   </p>
                 </div>
               </div>

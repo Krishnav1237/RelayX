@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { ExecutionService } from '../orchestrator/ExecutionService';
 import { ExecutionRequest } from '../types';
+import { validateIntent } from '../config/security';
 
 const executionService = new ExecutionService();
 
@@ -8,19 +9,25 @@ export async function executeHandler(req: Request, res: Response): Promise<void>
   const startedAt = Date.now();
 
   try {
-    const { intent, context } = req.body;
+    const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
+    const { intent, context } = body as Record<string, unknown>;
+    const validatedIntent = validateIntent(intent);
 
-    if (typeof intent !== 'string' || intent.trim().length === 0) {
-      res.status(400).json({ error: 'Invalid input: intent must be a non-empty string' });
+    if (!validatedIntent.ok) {
+      res.status(400).json({ error: validatedIntent.error });
       return;
     }
 
-    const request: ExecutionRequest = { intent: intent.trim(), context };
+    const normalizedContext = normalizeContext(context);
+    const request: ExecutionRequest = {
+      intent: validatedIntent.intent,
+      context: normalizedContext,
+    };
 
     const result = await executionService.execute(request);
 
     // Section 5: Debug metadata (lightweight — no duplicate execution)
-    if (context?.debug === true) {
+    if (normalizedContext?.debug === true) {
       console.log(
         `[DEBUG] protocol: ${result.summary.finalProtocol}, retried: ${result.summary.wasRetried}, confidence: ${result.summary.confidence}, steps: ${result.trace.length}`
       );
@@ -38,17 +45,23 @@ export async function analyzeHandler(req: Request, res: Response): Promise<void>
   const startedAt = Date.now();
 
   try {
-    const { intent, context } = req.body;
+    const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
+    const { intent, context } = body as Record<string, unknown>;
+    const validatedIntent = validateIntent(intent);
 
-    if (typeof intent !== 'string' || intent.trim().length === 0) {
-      res.status(400).json({ error: 'Invalid input: intent must be a non-empty string' });
+    if (!validatedIntent.ok) {
+      res.status(400).json({ error: validatedIntent.error });
       return;
     }
 
-    const request: ExecutionRequest = { intent: intent.trim(), context };
+    const normalizedContext = normalizeContext(context);
+    const request: ExecutionRequest = {
+      intent: validatedIntent.intent,
+      context: normalizedContext,
+    };
     const result = await executionService.analyze(request);
 
-    if (context?.debug === true) {
+    if (normalizedContext?.debug === true) {
       console.log(
         `[DEBUG] analysis ready: ${result.summary.finalProtocol}, confidence: ${result.summary.confidence}, steps: ${result.trace.length}`
       );
@@ -62,11 +75,23 @@ export async function analyzeHandler(req: Request, res: Response): Promise<void>
   }
 }
 
+function normalizeContext(value: unknown): ExecutionRequest['context'] {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const context = value as Record<string, unknown>;
+  return {
+    ens: typeof context.ens === 'string' ? context.ens : undefined,
+    wallet: typeof context.wallet === 'string' ? context.wallet : undefined,
+    demo: context.demo === true,
+    debug: context.debug === true,
+  };
+}
+
 export async function confirmExecutionHandler(req: Request, res: Response): Promise<void> {
   const startedAt = Date.now();
 
   try {
-    const { approvalId } = req.body;
+    const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
+    const { approvalId } = body as Record<string, unknown>;
 
     if (typeof approvalId !== 'string' || approvalId.trim().length === 0) {
       res.status(400).json({ error: 'Invalid input: approvalId is required' });

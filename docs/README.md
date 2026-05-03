@@ -19,6 +19,7 @@ Complete guides for understanding and extending the RelayX agent system.
 ### Reference
 
 - **[Current Limitations](./current-limitations.md)** — Known constraints and workarounds
+- **[Bug Fixes & History](./bug-fixes.md)** — Recently fixed critical issues
 - **[Repository Map](./repository-map.md)** — File structure and ownership
 
 ---
@@ -34,6 +35,7 @@ Complete guides for understanding and extending the RelayX agent system.
 | *I want to run locally* | [Development Runbook](./development-runbook.md) |
 | *I want to enable LLM explanations* | [LLM Setup](./llm-setup.md) |
 | *I hit an issue* | [Current Limitations](./current-limitations.md) |
+| *What bugs were fixed?* | [Bug Fixes & History](./bug-fixes.md) |
 
 ---
 
@@ -55,7 +57,7 @@ RelayX is a **deterministic multi-agent DeFi execution engine** that:
 
 - **Backend**: Express + TypeScript + Viem
 - **Frontend**: Next.js + React + TailwindCSS
-- **Chain**: Ethereum mainnet (ENS, Uniswap)
+- **Chain**: Ethereum mainnet and Sepolia ENS (`RELAYX_CHAIN`), with Ethereum market-data yields by default
 - **Data**: DefiLlama (yield), CoinGecko (prices), AXL (consensus)
 - **Testing**: Vitest + TypeScript
 
@@ -81,7 +83,8 @@ docs/
 ├── api-reference.md            # Endpoint schemas
 ├── development-runbook.md      # Local setup & debugging
 ├── llm-setup.md                # Optional LLM config
-├── current-limitations.md      # Known issues
+├── bug-fixes.md                # Fixed issues & resolution history
+├── current-limitations.md      # Known constraints
 └── repository-map.md           # File structure
 ```
 

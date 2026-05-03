@@ -53,7 +53,7 @@ RelayX follows a **multi-agent orchestration pattern** with deterministic decisi
       ┌──────────┼──────────┬──────────┐
       ▼          ▼          ▼          ▼
   DefiLlama   Ethereum   Uniswap    AXL Nodes
-   (Yield)      (ENS)   (Quotes)  (Consensus)
+   (Yield)  Mainnet/Sepolia (ENS) (Quotes) (Consensus)
 ```
 
 ## Execution Lifecycle
@@ -67,7 +67,7 @@ User Request: "find best yield on ETH"
    /analyze endpoint
       │
       ├─ Step 1: Build ENS context
-      │  └─ Resolve vitalik.eth, ens.eth, nick.eth
+      │  └─ Resolve user/wallet ENS plus RelayX/default ENS sources
       │  └─ Compute reputation score (0.0–1.0)
       │
       ├─ Step 2: YieldAgent.think()
@@ -177,7 +177,7 @@ User Request: "find best yield on ETH"
   };
   approval?: {
     id: string;
-    expiresAt: number;        // Unix ms, TTL 5 min
+    expiresAt: number;        // Unix ms, default TTL 5 min
   };
   debug?: {...};              // Only if context.debug=true
 }
@@ -187,7 +187,7 @@ User Request: "find best yield on ETH"
 
 ```typescript
 {
-  agent: string;              // e.g., "yield.relay.eth"
+  agent: string;              // e.g., "yield.relayx.eth"
   step: string;               // e.g., "analyze", "evaluate", "approve"
   message: string;
   metadata?: {
@@ -229,8 +229,8 @@ APY  │  Risk Level  │  Approval Logic
 
 ### Memory Influence
 
-- **Success Rate ≥ 0.7**: Boosted confidence
-- **Success Rate < 0.5**: Penalized, preferred in retry
+- **Success Rate > 0.9**: Boost confidence by 0.05
+- **Success Rate < 0.6**: Reduce confidence by 0.05 and add 10 risk score
 - **No history**: Neutral (default)
 
 ## Retry Strategy
@@ -259,7 +259,7 @@ If retry also fails → return rejection reason in summary.
 
 | Component | TTL | Key |
 |-----------|-----|-----|
-| ENS names + records | 5 min | {name} |
+| ENS names + records | `ENS_CACHE_TTL_MS` (default 5 min) | {name} |
 | Yield options | varies | {asset} |
 | Swap quotes | varies | {tokenIn}→{tokenOut} |
 | Protocol stats | in-memory | {protocol} |
@@ -268,5 +268,14 @@ If retry also fails → return rejection reason in summary.
 
 - **No randomness**: Same input always yields same decision path
 - **Overflow protection**: Confidence values clamped to [0, 0.95]
+- **API input bounds**: Intent is non-empty and limited by `MAX_INTENT_LENGTH`
+- **Rate limiting**: Process-local limiter controlled by `RATE_LIMIT_WINDOW_MS` and `RATE_LIMIT_MAX_REQUESTS`
 - **No magic numbers**: All thresholds configurable via code
 - **Trace for audit**: Every decision logged with reasoning + metadata
+
+## Chain & Identity Configuration
+
+- `RELAYX_CHAIN=mainnet|sepolia` selects the ENS/reverse-lookup network.
+- `RELAYX_AGENT_ENS_ROOT=relayx.eth` generates `system.relayx.eth`, `yield.relayx.eth`, `risk.relayx.eth`, and `executor.relayx.eth`.
+- `RELAYX_DEFAULT_ENS_SOURCES` can point reputation checks at deployed RelayX agent subdomains for Sepolia demos.
+- DefiLlama yield discovery remains live market data (`DEFILLAMA_CHAIN=Ethereum` by default). Testnet demos do not submit transactions.
