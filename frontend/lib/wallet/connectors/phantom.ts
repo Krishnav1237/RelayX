@@ -1,8 +1,10 @@
+import type { PhantomProvider } from '../types';
+
 declare global {
   interface Window {
-    solana?: any;
+    solana?: PhantomProvider;
     phantom?: {
-      solana?: any;
+      solana?: PhantomProvider;
     };
   }
 }
@@ -29,7 +31,7 @@ export async function connectPhantom(): Promise<string> {
     });
 
     // Setup account change listener
-    provider.on('accountChanged', (publicKey: any) => {
+    provider.on('accountChanged', (publicKey: unknown) => {
       if (publicKey) {
         window.location.reload();
       } else {
@@ -50,7 +52,7 @@ export async function connectPhantom(): Promise<string> {
   }
 }
 
-function getPhantomProvider() {
+function getPhantomProvider(): PhantomProvider | null {
   if (typeof window === 'undefined') return null;
 
   if ('phantom' in window) {

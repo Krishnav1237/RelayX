@@ -219,7 +219,12 @@ export class WalletAwareAPIClient {
   async execute(intent: string, options?: { demo?: boolean; debug?: boolean }) {
     const walletInfo = getWalletInfo();
 
-    const body: any = { intent };
+    const body: {
+      intent: string;
+      walletAddress?: string | null;
+      network?: string | null;
+      context?: { demo?: boolean; debug?: boolean };
+    } = { intent };
 
     // Include wallet info in body
     if (walletInfo.isConnected) {

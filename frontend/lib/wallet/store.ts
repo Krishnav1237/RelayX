@@ -7,7 +7,7 @@ import { connectWalletConnect } from './connectors/walletconnect';
 
 export const useWalletStore = create<WalletStore>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       // State
       isConnected: false,
       address: null,

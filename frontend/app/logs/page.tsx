@@ -1,22 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Activity, Clock, Database, Filter, Terminal, ArrowLeft, X } from 'lucide-react';
+import { Activity, Clock, Database, Filter, Terminal, X } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { AppBackground } from '@/components/app-background';
 import { ExecutionFloatingPanel } from '@/components/execution-floating-panel';
 import { Navbar } from '@/components/navbar';
 import {
   formatApy,
-  loadExecutionLog,
   loadExecutionSession,
   normalizeAgentName,
   normalizeExecutionResponse,
   saveExecutionSession,
-  saveExecutionLog,
   initializeStorage,
   type AgentTrace,
   type CanonicalAgentName,
@@ -37,6 +35,14 @@ const AGENT_FILTERS: Array<{ label: string; value: AgentFilter }> = [
 ];
 
 export default function LogsPage() {
+  return (
+    <Suspense fallback={null}>
+      <LogsPageContent />
+    </Suspense>
+  );
+}
+
+function LogsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const highlightTimestamp = searchParams.get('t');

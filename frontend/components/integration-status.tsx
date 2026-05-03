@@ -43,45 +43,6 @@ function StatusDot({ status }: { status: ServiceStatus['status'] }) {
   );
 }
 
-// ─── Single service badge ─────────────────────────────────────────────────────
-
-function ServiceBadge({ name, service }: { name: string; service: ServiceStatus }) {
-  const textColor: Record<ServiceStatus['status'], string> = {
-    ok: 'text-emerald-400',
-    degraded: 'text-yellow-400',
-    down: 'text-red-400',
-    loading: 'text-zinc-500',
-    unknown: 'text-zinc-500',
-  };
-
-  return (
-    <div className="flex items-center gap-1.5 rounded-md border border-border/50 bg-background/40 px-2.5 py-1.5 backdrop-blur-sm">
-      {service.status === 'loading' ? (
-        <Loader2 className="h-2 w-2 animate-spin text-zinc-500" />
-      ) : (
-        <StatusDot status={service.status} />
-      )}
-      <span className="text-[10px] font-medium text-zinc-400">{name}</span>
-      {service.status !== 'loading' && (
-        <span className={`font-mono text-[9px] ${textColor[service.status]}`}>
-          {service.status === 'ok' ? 'live' : service.status === 'degraded' ? 'fallback' : 'offline'}
-        </span>
-      )}
-      {service.link && service.status === 'ok' && (
-        <a
-          href={service.link}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-zinc-600 hover:text-zinc-400"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <ExternalLink className="h-2.5 w-2.5" />
-        </a>
-      )}
-    </div>
-  );
-}
-
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function IntegrationStatus() {
@@ -141,9 +102,12 @@ export function IntegrationStatus() {
   }, []);
 
   useEffect(() => {
-    fetchHealth();
+    const timeout = window.setTimeout(fetchHealth, 0);
     const interval = setInterval(fetchHealth, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    return () => {
+      window.clearTimeout(timeout);
+      clearInterval(interval);
+    };
   }, [fetchHealth]);
 
   const allOk = Object.values(health).every((s) => s.status === 'ok' || s.status === 'loading');
@@ -363,66 +327,3 @@ function LegendItem({ color, label }: { color: string; label: string }) {
 
 // ─── Health parsers ───────────────────────────────────────────────────────────
 
-// Parsers kept for backward-compat if individual health endpoints are used elsewhere
-
-function parseAxlHealth(result: PromiseSettledResult<Record<string, unknown>>): ServiceStatus {
-  if (result.status === 'rejected') return { status: 'down', label: 'AXL', detail: 'unreachable' };
-  const data = result.value;
-  const mode = data.mode as string;
-  const peers = data.peerCount as number;
-
-  if (mode === 'real') return { status: 'ok', label: 'AXL', detail: `real node, ${peers} peer(s)` };
-  if (mode === 'sim') return { status: 'degraded', label: 'AXL', detail: `sim node, ${peers} peer(s)` };
-  return { status: 'down', label: 'AXL', detail: 'offline' };
-}
-
-function parseZeroGHealth(result: PromiseSettledResult<Record<string, unknown>>): ServiceStatus {
-  if (result.status === 'rejected') return { status: 'down', label: '0G', detail: 'unreachable' };
-  const data = result.value;
-  const mode = data.mode as string;
-
-  if (mode === '0g-storage') {
-    const records = data.recordCount as number;
-    return {
-      status: 'ok',
-      label: '0G',
-      detail: `Galileo chain 16602, ${records} records`,
-      link: 'https://explorer.0g.ai',
-    };
-  }
-  return {
-    status: 'degraded',
-    label: '0G',
-    detail: 'in-memory (no private key)',
-  };
-}
-
-function parseUniswapHealth(result: PromiseSettledResult<Record<string, unknown>>): ServiceStatus {
-  if (result.status === 'rejected') return { status: 'down', label: 'Uniswap', detail: 'unreachable' };
-  const data = result.value;
-  const source = data.source as string;
-  const chainId = data.chainId as number;
-
-  if (source === 'uniswap-v3-quoter') {
-    return { status: 'ok', label: 'Uniswap', detail: `QuoterV2 chain ${chainId}` };
-  }
-  if (source === 'coingecko') {
-    return { status: 'degraded', label: 'Uniswap', detail: 'CoinGecko spot fallback' };
-  }
-  return { status: 'down', label: 'Uniswap', detail: 'no quote source' };
-}
-
-function parseYieldHealth(result: PromiseSettledResult<Record<string, unknown>>): ServiceStatus {
-  if (result.status === 'rejected') return { status: 'down', label: 'Yield', detail: 'unreachable' };
-  const data = result.value;
-  const source = data.source as string;
-  const protocols = data.protocols as number;
-
-  if (source === 'defillama') {
-    return { status: 'ok', label: 'Yield', detail: `DefiLlama live, ${protocols} protocols` };
-  }
-  if (source === 'cache') {
-    return { status: 'degraded', label: 'Yield', detail: 'cached data' };
-  }
-  return { status: 'down', label: 'Yield', detail: 'no data' };
-}

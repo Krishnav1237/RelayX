@@ -1,4 +1,4 @@
-import { BrowserProvider } from 'ethers';
+import type { EIP1193Provider, EIP6963AnnounceProviderEvent } from '../types';
 
 // WalletConnect implementation using EIP-6963 for broader wallet support
 export async function connectWalletConnect(): Promise<string> {
@@ -11,9 +11,7 @@ export async function connectWalletConnect(): Promise<string> {
 
   if (provider) {
     try {
-      const accounts = await provider.request({
-        method: 'eth_requestAccounts',
-      });
+      const accounts = await requestAccounts(provider);
 
       if (!accounts || accounts.length === 0) {
         throw new Error('No accounts found');
@@ -31,9 +29,7 @@ export async function connectWalletConnect(): Promise<string> {
   // Fallback: Check for any injected Ethereum provider
   if (window.ethereum) {
     try {
-      const accounts = await window.ethereum.request({
-        method: 'eth_requestAccounts',
-      });
+      const accounts = await requestAccounts(window.ethereum);
 
       if (!accounts || accounts.length === 0) {
         throw new Error('No accounts found');
@@ -53,15 +49,27 @@ export async function connectWalletConnect(): Promise<string> {
   );
 }
 
-async function detectEIP6963Providers(): Promise<any> {
+async function requestAccounts(provider: EIP1193Provider): Promise<string[]> {
+  const accounts = await provider.request({
+    method: 'eth_requestAccounts',
+  });
+
+  return Array.isArray(accounts)
+    ? accounts.filter((account): account is string => typeof account === 'string')
+    : [];
+}
+
+async function detectEIP6963Providers(): Promise<EIP1193Provider | null> {
   if (typeof window === 'undefined') return null;
 
   return new Promise((resolve) => {
-    const providers: any[] = [];
+    const providers: EIP1193Provider[] = [];
 
     // Listen for EIP-6963 announcements
-    window.addEventListener('eip6963:announceProvider', (event: any) => {
-      providers.push(event.detail.provider);
+    window.addEventListener('eip6963:announceProvider', (event: Event) => {
+      const providerEvent = event as EIP6963AnnounceProviderEvent;
+      if (!providerEvent.detail?.provider) return;
+      providers.push(providerEvent.detail.provider);
     });
 
     // Request providers to announce themselves
@@ -76,6 +84,6 @@ async function detectEIP6963Providers(): Promise<any> {
 
 declare global {
   interface Window {
-    ethereum?: any;
+    ethereum?: EIP1193Provider;
   }
 }

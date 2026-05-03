@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronUp,
   Terminal,
-  Loader2,
   AlertTriangle,
   Play,
   Shield,
@@ -86,7 +85,6 @@ export default function Dashboard() {
   // Check chain ID when wallet is connected
   useEffect(() => {
     if (!isConnected || !address) {
-      setCurrentChainId(null);
       return;
     }
 
@@ -102,13 +100,15 @@ export default function Dashboard() {
     checkChainId();
 
     // Listen for chain changes
-    if (typeof window !== 'undefined' && window.ethereum) {
-      const handleChainChanged = (chainIdHex: string) => {
+    const ethereum = typeof window !== 'undefined' ? window.ethereum : undefined;
+    if (ethereum) {
+      const handleChainChanged = (chainIdHex: unknown) => {
+        if (typeof chainIdHex !== 'string') return;
         setCurrentChainId(parseInt(chainIdHex, 16));
       };
-      window.ethereum.on('chainChanged', handleChainChanged);
+      ethereum.on('chainChanged', handleChainChanged);
       return () => {
-        window.ethereum.removeListener('chainChanged', handleChainChanged);
+        ethereum.removeListener('chainChanged', handleChainChanged);
       };
     }
   }, [isConnected, address]);
@@ -300,7 +300,6 @@ export default function Dashboard() {
         response: data,
         streamQueue: data.trace,
         isStreaming: true,
-        savedAt: Date.now(),
       });
       setIsStreaming(true);
     } catch (error) {
@@ -361,7 +360,7 @@ export default function Dashboard() {
             await switchToSepolia();
             chainId = 11155111;
             console.log('[DASHBOARD] Switched to Sepolia successfully');
-          } catch (err) {
+          } catch {
             throw new Error('Please switch to Sepolia to execute this transaction.');
           }
         }

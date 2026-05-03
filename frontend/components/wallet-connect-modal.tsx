@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, AlertCircle } from 'lucide-react';
 import { useWalletStore } from '@/lib/wallet/store';
 import type { WalletType } from '@/lib/wallet/types';
+import { useIsClient } from '@/lib/use-is-client';
 
 interface WalletConnectModalProps {
   isOpen: boolean;
@@ -46,12 +47,7 @@ const walletOptions: WalletOption[] = [
 export function WalletConnectModal({ isOpen, onClose }: WalletConnectModalProps) {
   const { connect, isConnecting, error, clearError } = useWalletStore();
   const [connectingWallet, setConnectingWallet] = useState<WalletType | null>(null);
-  const [mounted, setMounted] = useState(false);
-
-  // Ensure component is mounted before rendering portal
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useIsClient();
 
   const handleConnect = async (walletType: WalletType) => {
     setConnectingWallet(walletType);
@@ -68,12 +64,12 @@ export function WalletConnectModal({ isOpen, onClose }: WalletConnectModalProps)
     }
   };
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     if (!isConnecting) {
       clearError();
       onClose();
     }
-  };
+  }, [clearError, isConnecting, onClose]);
 
   // Handle ESC key press
   useEffect(() => {
@@ -93,7 +89,7 @@ export function WalletConnectModal({ isOpen, onClose }: WalletConnectModalProps)
       document.removeEventListener('keydown', handleEscape);
       document.body.style.overflow = 'unset';
     };
-  }, [isOpen, isConnecting]);
+  }, [handleClose, isOpen, isConnecting]);
 
   // Don't render until mounted (prevents SSR issues)
   if (!mounted) {

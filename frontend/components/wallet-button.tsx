@@ -7,6 +7,7 @@ import { Wallet, Copy, LogOut, Check, ChevronDown } from 'lucide-react';
 import { useWalletStore } from '@/lib/wallet/store';
 import { WalletConnectModal } from './wallet-connect-modal';
 import { shortenAddress, copyToClipboard, getNetworkName, getWalletIcon } from '@/lib/wallet/utils';
+import { useIsClient } from '@/lib/use-is-client';
 
 export function WalletButton() {
   const { isConnected, address, disconnect, networkType, walletType } = useWalletStore();
@@ -14,11 +15,7 @@ export function WalletButton() {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useIsClient();
 
   const handleCopyAddress = async () => {
     if (!address) return;
