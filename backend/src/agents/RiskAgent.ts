@@ -167,7 +167,7 @@ export class RiskAgent extends BaseAgent {
     riskScore += memoryResult.riskScoreDelta;
     confidenceAdjustment += memoryResult.confidenceDelta;
     if (memoryResult.flag) flags.push(memoryResult.flag);
-    ts = memoryResult.timestamp;
+    // DO NOT reset ts from memoryResult — AXL already advanced ts past that point
     const memoryInfluence = memoryResult.memoryInfluence;
 
     // Log memory influence to trace

@@ -379,6 +379,7 @@ export class UniswapAdapter {
       tokenOut: tokenOutAddr,
       fee,
       recipient: recipient as `0x${string}`,
+      deadline,
       amountIn: BigInt(params.amount),
       amountOutMinimum: amountOutMin,
       sqrtPriceLimitX96: BigInt(0),
@@ -438,17 +439,23 @@ export class UniswapAdapter {
 }
 
 // ─── ABI encoding helper ───────────────────────────────────────────────────────
+// Encodes the exactInputSingle(params) call for Uniswap SwapRouter02.
+// SwapRouter02 struct order:
+//   tokenIn, tokenOut, fee, recipient, deadline, amountIn, amountOutMinimum, sqrtPriceLimitX96
+// This differs from SwapRouter01 which has no deadline in the struct.
 
 function encodeExactInputSingle(params: {
   tokenIn: `0x${string}`;
   tokenOut: `0x${string}`;
   fee: number;
   recipient: `0x${string}`;
+  deadline: number;
   amountIn: bigint;
   amountOutMinimum: bigint;
   sqrtPriceLimitX96: bigint;
 }): `0x${string}` {
-  // Function selector for exactInputSingle
+  // Function selector for exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))
+  // keccak256('exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))')
   const selector = '0x414bf389';
 
   function padHex(value: string, bytes = 32): string {
@@ -463,12 +470,14 @@ function encodeExactInputSingle(params: {
     return padHex(value.toString(16));
   }
 
-  // Tuple is encoded inline (not as a reference for function inputs in this ABI)
+  // SwapRouter02 struct order:
+  // tokenIn, tokenOut, fee, recipient, deadline, amountIn, amountOutMinimum, sqrtPriceLimitX96
   const encoded = [
     addressToHex(params.tokenIn),
     addressToHex(params.tokenOut),
     uintToHex(BigInt(params.fee)),
     addressToHex(params.recipient),
+    uintToHex(BigInt(params.deadline)),
     uintToHex(params.amountIn),
     uintToHex(params.amountOutMinimum),
     uintToHex(params.sqrtPriceLimitX96),
