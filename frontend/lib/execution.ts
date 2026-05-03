@@ -17,12 +17,25 @@ export interface AgentTrace {
   timestamp: number;
 }
 
+export interface SwapCalldata {
+  to: string;
+  data: string;
+  value: string;
+  gasEstimate: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountOut: string;
+  router: string;
+  deadline: number;
+}
+
 export interface UniswapQuoteResult {
   amountOut: string;
   priceImpact: number;
   gasEstimate: string;
   route: string;
-  source: 'live' | 'mock';
+  source: 'uniswap' | 'uniswap-v3-quoter' | 'coingecko' | 'cache' | 'live';
+  calldata?: SwapCalldata;
 }
 
 export interface ENSInfluence {
@@ -58,6 +71,7 @@ export interface ExecutionResult {
   status: 'pending_approval' | 'success' | 'failed';
   attempt?: number;
   swap?: UniswapQuoteResult;
+  executionMode?: 'prepared' | 'executed';
 }
 
 export interface ExecutionSummary {
@@ -344,20 +358,22 @@ export function summarizeMetadata(metadata?: Record<string, unknown>): MetadataS
   }
 
   if (swap) {
+    const swapIsOnChain = swap.source === 'uniswap-v3-quoter' || swap.source === 'uniswap' || swap.source === 'live';
     items.push({
       label: 'Swap',
       value: `${swap.amountOut} via ${swap.route}`,
-      tone: swap.source === 'live' ? 'success' : 'info',
+      tone: swapIsOnChain ? 'success' : 'info',
     });
   }
 
   const amountOut = toOptionalString(metadata.amountOut);
   const route = toOptionalString(metadata.route);
   if (amountOut && route) {
+    const srcIsOnChain = metadata.source === 'live' || metadata.source === 'uniswap-v3-quoter' || metadata.source === 'uniswap';
     items.push({
       label: 'Swap',
       value: `${amountOut} via ${route}`,
-      tone: metadata.source === 'live' ? 'success' : 'info',
+      tone: srcIsOnChain ? 'success' : 'info',
     });
   }
 
@@ -622,9 +638,18 @@ function normalizeUniswapQuoteResult(value: unknown): UniswapQuoteResult | undef
   const amountOut = toOptionalString(value.amountOut);
   const route = toOptionalString(value.route);
   const gasEstimate = toOptionalString(value.gasEstimate);
-  const source = value.source === 'live' ? 'live' : 'mock';
+
+  // Accept all backend source values; map unknown to 'cache'
+  const validSources = ['uniswap', 'uniswap-v3-quoter', 'coingecko', 'cache', 'live'] as const;
+  type ValidSource = (typeof validSources)[number];
+  const source: ValidSource = validSources.includes(value.source as ValidSource)
+    ? (value.source as ValidSource)
+    : 'cache';
 
   if (!amountOut && !route && !gasEstimate) return undefined;
+
+  // Preserve calldata so MetaMask can use it
+  const calldata = normalizeSwapCalldata(value.calldata);
 
   return {
     amountOut: amountOut ?? '',
@@ -632,6 +657,25 @@ function normalizeUniswapQuoteResult(value: unknown): UniswapQuoteResult | undef
     gasEstimate: gasEstimate ?? '',
     route: route ?? '',
     source,
+    ...(calldata ? { calldata } : {}),
+  };
+}
+
+function normalizeSwapCalldata(value: unknown): SwapCalldata | undefined {
+  if (!isRecord(value)) return undefined;
+  const to = toOptionalString(value.to);
+  const data = toOptionalString(value.data);
+  if (!to || !data) return undefined;
+  return {
+    to,
+    data,
+    value: toOptionalString(value.value) ?? '0',
+    gasEstimate: toOptionalString(value.gasEstimate) ?? '200000',
+    tokenIn: toOptionalString(value.tokenIn) ?? '',
+    tokenOut: toOptionalString(value.tokenOut) ?? '',
+    amountOut: toOptionalString(value.amountOut) ?? '',
+    router: toOptionalString(value.router) ?? '',
+    deadline: toNumber(value.deadline) ?? 0,
   };
 }
 

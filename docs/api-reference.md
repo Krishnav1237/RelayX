@@ -8,26 +8,58 @@ Complete request/response schemas for the RelayX backend API.
 http://localhost:3001
 ```
 
+Frontend proxies `/api/*` → `http://localhost:3001/*` via `next.config.ts`.
+
+---
+
 ## Health Endpoints
 
 ### GET /health
 
-Server health check.
+Overall server status.
 
-**Response** (200):
+**Response (200)**:
 ```json
-{ "status": "ok", "chain": "mainnet", "chainId": 1 }
+{
+  "status": "ok",
+  "chain": "sepolia",
+  "chainId": 11155111,
+  "timestamp": 1714000000000,
+  "integrations": {
+    "uniswap": "QuoterV2 on-chain + CoinGecko fallback",
+    "zerog": "0G Galileo Testnet",
+    "axl": "real AXL node"
+  }
+}
+```
+
+### GET /integration-health
+
+Unified adapter status — all in one request.
+
+**Response (200)**:
+```json
+{
+  "axl":     "ok" | "fallback",
+  "uniswap": "ok" | "fallback",
+  "memory":  "ok" | "fallback",
+  "ens":     "ok",
+  "timestamp": 1714000000000
+}
 ```
 
 ### GET /axl-health
 
-AXL network availability (3 nodes).
+AXL peer node status.
 
-**Response** (200/503):
+**Response (200 / 503)**:
 ```json
 {
-  "status": "ok" | "down",
-  "nodesReachable": 0-3
+  "status":       "ok" | "down",
+  "mode":         "real" | "sim" | "offline",
+  "nodeUrl":      "http://127.0.0.1:9002",
+  "peerCount":    3,
+  "ourPublicKey": "abcdef123456..."
 }
 ```
 
@@ -35,12 +67,12 @@ AXL network availability (3 nodes).
 
 DefiLlama data availability.
 
-**Response** (200/503):
+**Response (200 / 503)**:
 ```json
 {
-  "status": "ok" | "unavailable",
-  "source": "defillama" | "cache" | "none",
-  "protocols": number
+  "status":    "ok" | "unavailable",
+  "source":    "defillama" | "cache" | "none",
+  "protocols": 12
 }
 ```
 
@@ -48,140 +80,187 @@ DefiLlama data availability.
 
 ENS resolution capability.
 
-**Response** (200):
+**Response (200)**:
 ```json
 {
-  "status": "ok" | "fallback",
-  "addressResolved": boolean,
-  "chain": "mainnet" | "sepolia"
+  "status":          "ok" | "fallback",
+  "addressResolved": true,
+  "chain":           "sepolia"
 }
 ```
+
+### GET /quote-health
+
+Uniswap V3 QuoterV2 status.
+
+**Response (200 / 503)**:
+```json
+{
+  "status":        "ok" | "degraded" | "offline",
+  "source":        "uniswap-v3-quoter" | "coingecko",
+  "chainId":       11155111,
+  "quoterAddress": "0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3"
+}
+```
+
+### GET /memory-health
+
+0G Galileo storage status.
+
+**Response (200)**:
+```json
+{
+  "status":      "ok" | "degraded",
+  "mode":        "0g-storage" | "in-memory" | "demo",
+  "chainId":     16602,
+  "recordCount": 5,
+  "faucetUrl":   "https://faucet.0g.ai",
+  "explorerUrl": "https://explorer.0g.ai",
+  "details": {
+    "rpcUrl":        "https://evmrpc-testnet.0g.ai",
+    "indexerUrl":    "https://indexer-storage-testnet-turbo.0g.ai",
+    "walletAddress": "0x...",
+    "balance":       "1.23 0G"
+  }
+}
+```
+
+---
 
 ## Execution Endpoints
 
 ### POST /analyze
 
-Analyze user intent, return pending approval.
+Analyze user intent, generate Uniswap swap quote + `SwapCalldata`, return pending approval.
 
 **Request**:
 ```json
 {
   "intent": "find best yield on ETH",
   "context": {
-    "ens": "vitalik.eth",
-    "wallet": "0x...",
-    "demo": false,
-    "debug": false
+    "ens":    "vitalik.eth",
+    "wallet": "0x1234...abcd",
+    "demo":   false,
+    "debug":  false
   }
 }
 ```
 
-**Response** (200):
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `intent` | string | ✅ | Max `MAX_INTENT_LENGTH` chars (default 1000) |
+| `context.ens` | string | ❌ | ENS name → primary reputation source |
+| `context.wallet` | string | ❌ | Address → triggers `SwapCalldata` generation |
+| `context.demo` | boolean | ❌ | Use seeded memory for demo/testing |
+| `context.debug` | boolean | ❌ | Include debug block in response |
+
+**Response (200)**:
 ```json
 {
   "intent": "find best yield on ETH",
   "trace": [
     {
-      "agent": "system.relayx.eth",
-      "step": "start",
-      "message": "Processing intent...",
-      "metadata": { "ensSourcesUsed": [...], "reputationScore": 0.85, "chain": "mainnet" },
-      "timestamp": 1234567890
-    },
-    ...
+      "agent":     "system.relayx.eth",
+      "step":      "start",
+      "message":   "Processing intent: find best yield on ETH",
+      "metadata":  { "ensSourcesUsed": ["vitalik.eth"], "reputationScore": 0.85 },
+      "timestamp": 1714000000000
+    }
   ],
   "final_result": {
-    "protocol": "Aave",
-    "apy": "4.2%",
-    "action": "deposit",
-    "status": "pending_approval",
-    "attempt": 1,
+    "protocol":      "Aave",
+    "apy":           "4.2%",
+    "action":        "deposit",
+    "status":        "pending_approval",
+    "attempt":       1,
+    "executionMode": "prepared",
     "swap": {
-      "amountOut": "1234.56",
-      "priceImpact": 0.5,
-      "gasEstimate": "120000",
-      "route": "ETH → USDC",
-      "source": "uniswap" | "coingecko" | "cache",
-      "lastUpdatedAt": 1234567890
+      "amountOut":   "1823.45 USDC",
+      "priceImpact": 0.1,
+      "gasEstimate": "180000",
+      "route":       "ETH → [V3 0.05%] → USDC",
+      "source":      "uniswap-v3-quoter",
+      "calldata": {
+        "to":          "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
+        "data":        "0x414bf389...",
+        "value":       "1000000000000000000",
+        "gasEstimate": "180000",
+        "tokenIn":     "WETH",
+        "tokenOut":    "USDC",
+        "amountOut":   "1823450000",
+        "router":      "0x3bFA4769...",
+        "deadline":    1714001800
+      }
     }
   },
   "summary": {
-    "selectedProtocol": "Aave",
-    "initialProtocol": "Aave",
-    "finalProtocol": "Aave",
-    "wasRetried": false,
-    "reasonForRetry": null,
-    "totalSteps": 12,
-    "confidence": 0.85,
-    "explanation": "Selected Aave with 4.2% APY based on current yield...",
+    "selectedProtocol":  "Aave",
+    "initialProtocol":   "Aave",
+    "finalProtocol":     "Aave",
+    "wasRetried":        false,
+    "reasonForRetry":    null,
+    "totalSteps":        12,
+    "confidence":        0.84,
+    "explanation":       "Selected Aave V3 for its stable 4.2% APY and low protocol risk.",
     "decisionImpact": {
-      "ens": "strong ENS reputation increased tolerance",
-      "axl": "2/3 peers approved",
-      "memory": "Aave has 92% success rate"
+      "ens":    "strong ENS reputation increased risk tolerance",
+      "axl":    "2/3 peers approved",
+      "memory": "Aave has 92% historical success rate"
     }
   },
   "approval": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "expiresAt": 1234567890000 + 300000
+    "id":        "550e8400-e29b-41d4-a716-446655440000",
+    "expiresAt": 1714000300000
   },
   "debug": {
-    "attempts": 1,
-    "initialSelection": { "protocol": "Aave" },
+    "attempts":          1,
+    "initialSelection":  { "protocol": "Aave", "apy": 4.2, "riskLevel": "low" },
     "finalApprovedPlan": { "protocol": "Aave", "apy": 4.2, "riskLevel": "low" },
-    "riskDecision": "approve",
+    "riskDecision":      "approve",
     "ensReputationScore": 0.85,
     "ensInfluence": {
-      "tier": "strong",
+      "tier":            "strong",
       "reputationScore": 0.85,
-      "effect": "increased tolerance"
+      "effect":          "increased tolerance"
     },
     "axlInfluence": {
-      "approvalRatio": 0.67,
+      "approvalRatio":  0.67,
       "decisionImpact": "boost",
-      "isSimulated": false
+      "isSimulated":    false
     },
     "memoryInfluence": {
-      "protocol": "Aave",
-      "hasHistory": true,
-      "impact": "boosted",
-      "successRate": 0.92,
-      "executionCount": 13
+      "protocol":       "Aave",
+      "hasHistory":     true,
+      "impact":         "boosted",
+      "successRate":    0.92,
+      "executionCount": 10
     },
     "confidenceBreakdown": {
-      "yield": 0.83,
-      "risk": 0.86,
-      "execution": 0.85
+      "yield":     0.83,
+      "risk":      0.87,
+      "execution": 0.90
     }
   }
 }
 ```
 
-**Error** (400/500):
-```json
-{
-  "error": "Invalid input: intent must be a non-empty string"
-}
-```
+> **Note**: `swap.calldata` is only present when `context.wallet` is supplied and a valid Uniswap pool is found.
+> When using CoinGecko fallback, `calldata` is omitted (no pool address available).
 
-Intent length is bounded by `MAX_INTENT_LENGTH` (default: 1000). Overlong requests return:
+**Errors**:
 
-```json
-{
-  "error": "Invalid input: intent must be 1000 characters or fewer"
-}
-```
+| Status | Body | Cause |
+|---|---|---|
+| 400 | `{"error": "Intent must be a non-empty string"}` | Empty intent |
+| 400 | `{"error": "Intent must be 1000 characters or fewer"}` | Intent too long |
+| 429 | `{"error": "Too many requests"}` | Rate limit exceeded |
+| 500 | `{"error": "Internal server error"}` | Unexpected failure |
 
-### POST /execute
-
-Analyze + confirm execution in one call.
-
-**Request**: Same as `/analyze`
-
-**Response**: Same as `/execute/confirm` (below), with `status: "success"` if execution succeeds
+---
 
 ### POST /execute/confirm
 
-Execute approved plan.
+Confirm an approved execution. Call this **after** the MetaMask transaction has been successfully broadcast. Stores the execution record to 0G Galileo.
 
 **Request**:
 ```json
@@ -190,64 +269,71 @@ Execute approved plan.
 }
 ```
 
-**Response** (200):
+**Response (200)**:
 ```json
 {
   "intent": "find best yield on ETH",
-  "trace": [
-    ...
-    {
-      "agent": "executor.relayx.eth",
-      "step": "execute",
-      "message": "Deposit successful via ETH → USDC. Estimated output: 1234.56 USDC...",
-      "metadata": { "protocol": "Aave", "apy": "4.2%", "status": "success" },
-      "timestamp": 1234567900
-    }
-  ],
+  "trace": [...],
   "final_result": {
-    "protocol": "Aave",
-    "apy": "4.2%",
-    "action": "deposit",
-    "status": "success",
-    "attempt": 1,
-    "swap": { ... }
+    "protocol":      "Aave",
+    "apy":           "4.2%",
+    "action":        "deposit",
+    "status":        "success",
+    "attempt":       1,
+    "executionMode": "prepared",
+    "swap":          { ... }
   },
-  "summary": {
-    "selectedProtocol": "Aave",
-    "initialProtocol": "Aave",
-    "finalProtocol": "Aave",
-    "wasRetried": false,
-    "totalSteps": 18,
-    "confidence": 0.85,
-    "explanation": "Selected Aave with 4.2% APY. Successfully executed deposit.",
-    "decisionImpact": { ... }
-  },
-  "debug": { ... }
+  "summary": { ... }
 }
 ```
 
-**Error** (404/500):
-```json
-{
-  "error": "Approval request expired or not found"
-}
-```
+**Errors**:
+
+| Status | Body | Cause |
+|---|---|---|
+| 404 | `{"error": "Approval request expired or not found"}` | ID invalid or TTL elapsed |
+| 500 | `{"error": "..."}` | Execution failure |
+
+---
+
+### POST /execute
+
+Analyze + confirm in one call (no MetaMask). Useful for server-to-server or testing.
+
+**Request**: Same as `/analyze`
+
+**Response**: Same shape as `/execute/confirm` with `status: "success"`
 
 ---
 
 ## Data Types
 
-### ExecutionRequest
+### UniswapQuoteResult
 
 ```typescript
-interface ExecutionRequest {
-  intent: string;                    // Required, non-empty, default max 1000 chars
-  context?: {
-    ens?: string;                    // e.g., "vitalik.eth"
-    wallet?: string;                 // e.g., "0x..."
-    demo?: boolean;                  // Demo mode with seeded memory
-    debug?: boolean;                 // Include debug output
-  };
+interface UniswapQuoteResult {
+  amountOut:   string;   // e.g. "1823.45 USDC"
+  priceImpact: number;   // 0–100 (%)
+  gasEstimate: string;   // e.g. "180000"
+  route:       string;   // e.g. "ETH → [V3 0.05%] → USDC"
+  source:      'uniswap-v3-quoter' | 'coingecko' | 'cache';
+  calldata?:   SwapCalldata;  // only when context.wallet supplied + pool found
+}
+```
+
+### SwapCalldata
+
+```typescript
+interface SwapCalldata {
+  to:          string;  // Uniswap SwapRouter02 address
+  data:        string;  // ABI-encoded exactInputSingle calldata
+  value:       string;  // ETH amount in wei (0 for token-only swaps)
+  gasEstimate: string;  // estimated gas limit
+  tokenIn:     string;  // input token symbol
+  tokenOut:    string;  // output token symbol
+  amountOut:   string;  // minimum amount out (wei)
+  router:      string;  // router address (same as `to`)
+  deadline:    number;  // Unix timestamp (30 min from quote time)
 }
 ```
 
@@ -255,12 +341,13 @@ interface ExecutionRequest {
 
 ```typescript
 interface ExecutionResult {
-  protocol: string;
-  apy: string;                       // e.g., "4.2%"
-  action: "deposit";
-  status: "pending_approval" | "success" | "failed";
-  attempt: number;
-  swap?: UniswapQuoteResult;
+  protocol:       string;
+  apy:            string;   // e.g. "4.2%"
+  action:         'deposit';
+  status:         'pending_approval' | 'success' | 'failed';
+  attempt:        number;
+  executionMode?: 'prepared' | 'executed';
+  swap?:          UniswapQuoteResult;
 }
 ```
 
@@ -268,11 +355,11 @@ interface ExecutionResult {
 
 ```typescript
 interface AgentTrace {
-  agent: string;                     // e.g., "yield.relayx.eth"
-  step: string;                      // e.g., "analyze", "evaluate"
-  message: string;
+  agent:     string;                      // e.g. "yield.relayx.eth"
+  step:      string;                      // e.g. "analyze", "approve", "execute"
+  message:   string;
   metadata?: Record<string, unknown>;
-  timestamp: number;                 // Unix milliseconds
+  timestamp: number;                      // Unix milliseconds
 }
 ```
 
@@ -280,93 +367,72 @@ interface AgentTrace {
 
 ```typescript
 interface ExecutionSummary {
-  selectedProtocol: string;
-  initialProtocol: string;
-  finalProtocol: string;
-  wasRetried: boolean;
-  reasonForRetry?: string;
-  totalSteps: number;
-  confidence: number;                // 0.0–0.95
-  explanation: string;
+  selectedProtocol:  string;
+  initialProtocol:   string;
+  finalProtocol:     string;
+  wasRetried:        boolean;
+  reasonForRetry?:   string;
+  totalSteps:        number;
+  confidence:        number;   // 0.0–0.95
+  explanation:       string;
   decisionImpact: {
-    ens: string;
-    axl: string;
+    ens:     string;
+    axl:     string;
     memory?: string;
   };
 }
 ```
 
-### UniswapQuoteResult
+---
 
-```typescript
-interface UniswapQuoteResult {
-  amountOut: string;                 // e.g., "1234.56"
-  priceImpact: number;               // 0–100
-  gasEstimate: string;               // e.g., "120000"
-  route: string;                     // e.g., "ETH → USDC"
-  source: "uniswap" | "coingecko" | "cache";
-  lastUpdatedAt?: number;
-}
-```
+## Approval Flow
+
+1. `POST /analyze` → returns `approval.id` + `approval.expiresAt` (default 5 min TTL)
+2. Frontend detects `swap.calldata` → prompts MetaMask → `eth_sendTransaction` on Sepolia
+3. On MetaMask success → `POST /execute/confirm` with `approvalId`
+4. Backend stores record to 0G Galileo → returns `status: "success"`
+
+Approval TTL is bounded between 30 seconds and 30 minutes via `APPROVAL_TTL_MS`.
+Expired approvals return `404`.
 
 ---
 
-## Status Codes
+## Swap Sources
 
-| Code | Meaning |
-|------|---------|
-| 200 | Success |
-| 400 | Bad request (missing/invalid params) |
-| 404 | Approval not found or expired |
-| 500 | Server error |
-| 503 | Service unavailable (health checks) |
+| Source | When Active | Calldata Available |
+|---|---|---|
+| `uniswap-v3-quoter` | Alchemy RPC configured + pool exists on-chain | ✅ Yes |
+| `coingecko` | No Alchemy RPC or no on-chain pool | ❌ No |
+| `cache` | Serving a cached previous quote | Same as original |
 
 ---
 
 ## Context Parameters
 
-### intent (Required)
+### `context.wallet` → Enables Real Calldata
 
-User's natural language request. Examples:
-- "find best yield on ETH"
-- "get best USDC yield"
-- "find highest APY"
+When provided, `ExecutorAgent` calls `UniswapAdapter.getSwapCalldata()` to produce ABI-encoded `exactInputSingle` data bound to that wallet address as the `recipient`. The frontend can pass this directly to MetaMask:
 
-Asset is extracted automatically (ETH, USDC, USDT, DAI, WETH, WBTC, STETH by default). Extend with `YIELD_SUPPORTED_ASSETS`.
+```javascript
+await window.ethereum.request({
+  method: 'eth_sendTransaction',
+  params: [{
+    from:     walletAddress,
+    to:       calldata.to,
+    data:     calldata.data,
+    value:    '0x' + BigInt(calldata.value).toString(16),
+    gas:      '0x' + BigInt(calldata.gasEstimate).toString(16),
+  }]
+});
+```
 
-### context.ens (Optional)
+### `context.demo` → Seeded Memory
 
-User's ENS name to influence reputation signal. Examples:
-- "vitalik.eth"
-- "alice.eth"
-- "yield.relayx.eth" (RelayX agent subdomain)
+Activates isolated in-memory store with:
+- **Morpho**: 42% success rate → rejected
+- **Aave / Aave V3**: 92% success rate → approved on retry
 
-If provided, becomes primary ENS source (highest priority).
-
-### context.wallet (Optional)
-
-User's wallet address for reverse ENS lookup. Format: `0x` + 40 hex chars.
-
-Example: `0x1234567890123456789012345678901234567890`
-
-### context.demo (Optional)
-
-Enable demo mode with seeded memory. Causes rejection of Morpho (low history) and approval of Aave V3.
-
-### context.debug (Optional)
-
-Include debug metadata in response (confidence breakdown, raw decisions, etc.).
-
----
-
-## Approval Flow
-
-1. `/analyze` returns `approval.id` and `approval.expiresAt` (default 5 minutes)
-2. User reviews `summary.explanation` and `trace`
-3. User calls `/execute/confirm` with `approvalId`
-4. Response includes final execution status
-
-Approval IDs expire after `APPROVAL_TTL_MS` if not confirmed. The backend bounds this value between 30 seconds and 30 minutes.
+Useful for demos and testing the retry path without real on-chain data.
 
 ---
 
@@ -386,33 +452,55 @@ curl -X POST http://localhost:3001/execute \
 # Step 1: Analyze
 APPROVAL=$(curl -s -X POST http://localhost:3001/analyze \
   -H "Content-Type: application/json" \
-  -d '{"intent":"find best USDC yield"}' | jq -r '.approval.id')
+  -d '{"intent":"find best yield on ETH"}' | jq -r '.approval.id')
 
-# Step 2: Confirm
+# Step 2: Confirm (after MetaMask Tx)
 curl -X POST http://localhost:3001/execute/confirm \
   -H "Content-Type: application/json" \
   -d "{\"approvalId\":\"$APPROVAL\"}"
 ```
 
-### JavaScript
+### Curl: With Wallet (Generates Calldata)
+
+```bash
+curl -X POST http://localhost:3001/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "intent": "swap 1 ETH for USDC",
+    "context": { "wallet": "0x1234567890123456789012345678901234567890" }
+  }'
+```
+
+### JavaScript: Full Flow
 
 ```javascript
-// Analyze
-const analysis = await fetch('http://localhost:3001/analyze', {
+// 1. Analyze
+const analysis = await fetch('/api/analyze', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     intent: 'find best yield on ETH',
-    context: { ens: 'vitalik.eth', debug: true }
+    context: { wallet: accounts[0] }
   })
 }).then(r => r.json());
 
-console.log(analysis.summary.confidence); // 0.85
-console.log(analysis.trace); // [...AgentTrace]
-console.log(analysis.approval.id); // "..."
+// 2. MetaMask — if calldata available
+const { calldata } = analysis.final_result.swap ?? {};
+if (calldata && window.ethereum) {
+  const txHash = await window.ethereum.request({
+    method: 'eth_sendTransaction',
+    params: [{
+      from:  accounts[0],
+      to:    calldata.to,
+      data:  calldata.data,
+      value: '0x' + BigInt(calldata.value).toString(16),
+    }]
+  });
+  console.log('Tx:', txHash);
+}
 
-// Confirm
-const result = await fetch('http://localhost:3001/execute/confirm', {
+// 3. Confirm
+const result = await fetch('/api/execute/confirm', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ approvalId: analysis.approval.id })
@@ -420,3 +508,16 @@ const result = await fetch('http://localhost:3001/execute/confirm', {
 
 console.log(result.final_result.status); // "success"
 ```
+
+---
+
+## Status Codes
+
+| Code | Meaning |
+|---|---|
+| 200 | Success |
+| 400 | Bad request (missing / invalid params) |
+| 404 | Approval not found or expired |
+| 429 | Rate limit exceeded |
+| 500 | Server error |
+| 503 | Service unavailable (health endpoints) |

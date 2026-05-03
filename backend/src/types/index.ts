@@ -19,6 +19,18 @@ export interface ExecutionResult {
   executionMode?: 'prepared' | 'executed';
 }
 
+export interface SwapCalldata {
+  to: string;
+  data: string;
+  value: string;
+  gasEstimate: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountOut: string;
+  router: string;
+  deadline: number;
+}
+
 export interface UniswapQuoteResult {
   amountOut: string;
   priceImpact: number;
@@ -30,6 +42,7 @@ export interface UniswapQuoteResult {
   chainId?: number;
   fee?: number;
   rate?: number;
+  calldata?: SwapCalldata;
 }
 
 export type ENSTier = 'strong' | 'neutral' | 'weak';

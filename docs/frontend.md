@@ -71,8 +71,9 @@ frontend/
 1. Display trace entries in real-time (or loaded from session)
 2. Show summary: selected protocol, APY, confidence, explanation
 3. User reviews and clicks "Approve & Execute"
-4. Frontend calls `POST /api/execute/confirm` with approval ID
-5. Display final result: status, swap details, memory update
+4. Frontend receives `SwapCalldata` and prompts MetaMask via `submitSwapTransaction`
+5. If transaction succeeds, frontend calls `POST /api/execute/confirm` with approval ID
+6. Display final result: status, swap details, memory update
 
 **Features**:
 
@@ -109,8 +110,9 @@ Handles:
 
 1. **Request normalization**: Format user input for backend
 2. **Response normalization**: Transform backend response for UI
-3. **Session persistence**: Store/retrieve from localStorage
-4. **Terminal events**: Detect when trace is "complete"
+3. **Wallet Interaction**: Uses `@/lib/wallet-actions.ts` to trigger `eth_sendTransaction` via MetaMask using the injected EIP-1193 provider.
+4. **Session persistence**: Store/retrieve from localStorage
+5. **Terminal events**: Detect when trace is "complete"
 
 ### useExecution Hook (if using)
 

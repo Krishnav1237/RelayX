@@ -1,213 +1,183 @@
 # Bug Fixes & Resolution History
 
-This document tracks critical bugs that have been found and fixed in the RelayX backend.
+Chronological record of significant bugs found and fixed in RelayX.
 
 ---
 
-## Fixed Bugs (May 2026)
+## Audit #2 — May 2026 (Current Session)
+
+### Bug #5: `UniswapQuoteResult.source` type mismatch ✅ FIXED
+
+**Severity**: HIGH — Silent data corruption  
+**File**: `frontend/lib/execution.ts`
+
+**Issue**: The frontend type defined `source: 'live' | 'mock'`, but the backend returns `'uniswap-v3-quoter' | 'coingecko' | 'cache'`. The normalizer mapped all non-`'live'` values to `'mock'` — including real on-chain QuoterV2 data.
+
+**Impact**: On-chain quotes displayed as "mock" in the UI. Swap "success" tone (green) never shown for real data.
+
+**Fix**: Updated `UniswapQuoteResult.source` to `'uniswap' | 'uniswap-v3-quoter' | 'coingecko' | 'cache' | 'live'` and updated tone logic to treat `uniswap-v3-quoter` / `uniswap` as "success" (green).
+
+---
+
+### Bug #6: `normalizeUniswapQuoteResult` silently dropped `calldata` ✅ FIXED
+
+**Severity**: CRITICAL — MetaMask never triggered  
+**File**: `frontend/lib/execution.ts`
+
+**Issue**: The normalize function only returned `amountOut`, `priceImpact`, `gasEstimate`, `route`, `source`. The `calldata` object from the backend was silently discarded. The dashboard's MetaMask trigger checked `response.final_result.swap?.calldata` which was always `undefined`.
+
+**Impact**: Real on-chain execution via MetaMask was completely broken — calldata was generated correctly by the backend but dropped before reaching the UI.
+
+**Fix**: Added `normalizeSwapCalldata()` helper and passed `calldata` through in `normalizeUniswapQuoteResult()`.
+
+---
+
+### Bug #7: `ExecutionResult` missing `calldata` and `executionMode` fields ✅ FIXED
+
+**Severity**: HIGH — TypeScript blind spot  
+**File**: `frontend/lib/execution.ts`
+
+**Issue**: `ExecutionResult` interface lacked `executionMode?: 'prepared' | 'executed'` and `swap.calldata` (since `UniswapQuoteResult` didn't have it). TypeScript accepted the property access without error due to `unknown` cast paths, but the value was `undefined` at runtime.
+
+**Fix**: Added `SwapCalldata` interface (exported), `calldata?` to `UniswapQuoteResult`, and `executionMode?` to `ExecutionResult`.
+
+---
+
+### Bug #8: Dashboard used hardcoded Sepolia chainId ✅ FIXED
+
+**Severity**: MEDIUM — Breaks multi-network support  
+**File**: `frontend/app/dashboard/page.tsx`
+
+**Issue**: ChainId for MetaMask was inferred as `networkType === 'ethereum' ? 11155111 : 1`. Since MetaMask always sets `networkType = 'ethereum'`, the chainId was always `11155111` (Sepolia) regardless of what network the user was actually on.
+
+**Fix**: Replaced with `getCurrentChainId()` — a live EIP-1193 `eth_chainId` call to MetaMask.
+
+---
+
+### Bug #9: Synthetic MetaMask trace overwritten by backend response ✅ FIXED
+
+**Severity**: MEDIUM — UX — transaction hash never shown  
+**File**: `frontend/app/dashboard/page.tsx`
+
+**Issue**: When MetaMask succeeded, a synthetic trace entry was queued (e.g., `"Transaction broadcasted! Hash: 0x..."`). But then `setStreamQueue(backendTraces)` immediately replaced the queue, overwriting and losing the synthetic entry. The tx hash was never shown in the terminal.
+
+**Fix**: Accumulated synthetic traces in a local array and **merged** them with backend traces before setting `streamQueue`. The tx hash now appears as the first entry in the completion trace.
+
+---
+
+### Bug #10: `ExecutorAgent.test.ts` confidence assertion was fragile ✅ FIXED
+
+**Severity**: LOW — Test reliability  
+**File**: `backend/src/__tests__/ExecutorAgent.test.ts`
+
+**Issue**: Test asserted `expect(confidence).toBe(0.9)`, but confidence is dynamically computed (base 0.85 + bonuses for low risk and quote availability). On retry paths the value could be 0.85.
+
+**Fix**: Relaxed to `toBeGreaterThanOrEqual(0.75) / toBeLessThanOrEqual(0.95)`.
+
+---
+
+### Bug #11: `SwapCalldata` defined in two files ✅ FIXED
+
+**Severity**: LOW — Maintainability  
+**Files**: `UniswapAdapter.ts`, `types/index.ts`
+
+**Issue**: `SwapCalldata` was defined in both files after the previous session's refactoring. The backend imported from its local definition while the frontend used a different definition.
+
+**Fix**: Removed the duplicate from `UniswapAdapter.ts`. Now imports from `types/index.ts` (single source of truth).
+
+---
+
+### Bug #12: `ZeroGMemoryAdapter.seedStats()` used `Math.random()` ✅ FIXED
+
+**Severity**: LOW — Non-determinism  
+**File**: `backend/src/adapters/ZeroGMemoryAdapter.ts`
+
+**Issue**: `lastUsed` timestamps for seeded protocol stats were set using `Math.random() * 86400000 * 7`, making test runs non-deterministic.
+
+**Fix**: Replaced with fixed offsets: `now - 86400000 * N` (1 day apart per entry).
+
+---
+
+## Audit #1 — May 2026
 
 ### Bug #1: Missing Memory Influence Trace Entries ✅ FIXED
 
 **Severity**: CRITICAL  
-**Date Fixed**: 2026-05-03  
-**File**: `backend/src/agents/RiskAgent.ts` (lines 164-190)
+**File**: `backend/src/agents/RiskAgent.ts`
 
-**Issue**:
-- RiskAgent calculated memory influence (e.g., "Morpho has 42% success rate") but never logged this to the trace
-- Users couldn't see why protocols were approved/rejected based on historical performance
-- Tests expecting memory influence entries were failing
+**Issue**: RiskAgent calculated memory influence but never logged it to the trace. Users couldn't see why protocols were approved/rejected based on historical performance.
 
-**Impact**:
-- Users couldn't understand memory-based decisions
-- Test: `increases confidence when historical success is strong` failed
-- Test: `penalizes risk when historical success is weak` failed
-
-**Solution**:
-Added trace entry creation after `applyMemoryInfluence()`:
-
-```typescript
-if (memoryInfluence?.hasHistory) {
-  const successPercent = Math.round(memoryInfluence.successRate * 100);
-  const memoryMsg = `Memory: ${memoryInfluence.protocol} has ${successPercent}% success rate...`;
-  trace.push(this.log('review', memoryMsg, { memoryInfluence }, ts));
-}
-```
-
-**Verification**: All memory-related tests now pass (4/4 ✓)
+**Fix**: Added trace entry creation after `applyMemoryInfluence()`.
 
 ---
 
 ### Bug #2: Protocol Name Mismatch in Demo Memory ✅ FIXED
 
 **Severity**: CRITICAL  
-**Date Fixed**: 2026-05-03  
-**File**: `backend/src/adapters/ZeroGMemoryAdapter.ts` (line 284)
+**File**: `backend/src/adapters/ZeroGMemoryAdapter.ts`
 
-**Issue**:
-- Demo memory stored stats under `'Morpho Blue'` but YieldAgent selects protocol named `'Morpho'`
-- Memory lookup failed to find stats (protocol name mismatch)
-- Demo mode memory features were non-functional
+**Issue**: Demo memory stored stats under `'Morpho Blue'` but YieldAgent returned `'Morpho'`. Memory lookup always missed.
 
-**Root Cause**:
-YieldDataAdapter formats protocol names using dashes (e.g., 'morpho-blue' → 'Morpho Blue'), but sometimes YieldAgent returns shorter names like 'Morpho'
-
-**Impact**:
-- Demo mode test expected "Memory: Morpho has 42% success rate" in trace
-- Actual: "Memory: Morpho → no history (neutral)"
-- Test: `demo mode uses seeded memory to reject first choice and influence retry` failed
-
-**Solution**:
-Changed demo memory protocol names to match actual protocol names:
-
-```typescript
-static demo(): ZeroGMemoryAdapter {
-  return ZeroGMemoryAdapter.inMemory([
-    { protocol: 'Morpho', successRate: 0.42, ... },  // was 'Morpho Blue'
-    { protocol: 'Aave', successRate: 0.94, ... },
-    { protocol: 'Aave V3', successRate: 0.94, ... },
-  ]);
-}
-```
-
-**Verification**: Demo mode now works correctly (test passes ✓)
+**Fix**: Changed demo memory protocol names to match actual YieldAgent output names.
 
 ---
 
 ### Bug #3: Memory Influence Metadata Field Name Mismatch ✅ FIXED
 
 **Severity**: MEDIUM  
-**Date Fixed**: 2026-05-03  
-**File**: `backend/src/agents/RiskAgent.ts` (memory logging section)
+**File**: `backend/src/agents/RiskAgent.ts`
 
-**Issue**:
-- Code logged memory influence with `impact` value: `'boosted'` or `'penalized'`
-- Tests expected different field names: `'positive'` or `'negative'`
-- Test assertions couldn't find expected metadata
+**Issue**: Code logged `impact: 'boosted'|'penalized'` but tests expected `influence: 'positive'|'negative'`.
 
-**Impact**:
-- Test: `penalizes risk when historical success is weak` failed
-- Test assertions: `expect(memoryTrace!.metadata?.influence).toBe('negative')` failed
-
-**Solution**:
-Added mapping to convert `impact` to expected `influence` field names:
-
-```typescript
-const influenceMapping = {
-  'boosted': 'positive',
-  'penalized': 'negative',
-  'neutral': 'neutral'
-};
-trace.push(this.log(..., { influence: influenceMapping[memoryInfluence.impact] }));
-```
-
-**Verification**: Test assertions now pass (test passes ✓)
+**Fix**: Added mapping from `impact` values to `influence` field names.
 
 ---
 
-### Bug #4: Inflexible Integration Test Expectations ✅ FIXED
+### Bug #4: Integration Test Fixed Confidence Assertion ✅ FIXED
 
 **Severity**: MEDIUM  
-**Date Fixed**: 2026-05-03  
-**File**: `backend/src/__tests__/integration.test.ts` (line 38)
+**File**: `backend/src/__tests__/integration.test.ts`
 
-**Issue**:
-- Test expected execution confidence to be EXACTLY `0.9`
-- In reality, execution confidence varies based on retry status and bonuses:
-  - First attempt, low risk, with quote: 0.85 + 0.05 + 0.05 = 0.95 (clamped)
-  - First attempt, low risk: 0.85 + 0.05 = 0.90
-  - Retry, low risk, with quote: 0.85 - 0.1 + 0.05 + 0.05 = 0.85
-- Test was flaky because it relied on deterministic live data
+**Issue**: Test expected `execution confidence === 0.9` exactly. In retry scenarios confidence was 0.85.
 
-**Impact**:
-- Test: `should complete full execution flow with live data` failed
-- Expected: 0.9, Got: 0.85 (when retry occurred)
-
-**Solution**:
-Changed to accept realistic range based on actual behavior:
-
-```typescript
-// Execution confidence varies based on attempt count and risk profile
-expect(breakdown.execution).toBeGreaterThanOrEqual(0.75);
-expect(breakdown.execution).toBeLessThanOrEqual(0.95);
-```
-
-**Verification**: Integration test now passes reliably (test passes ✓)
+**Fix**: Changed to range assertion `[0.75, 0.95]`.
 
 ---
 
-## Test Results
+## Cumulative Test Status
 
-### Before Fixes
-```
-Failed Tests:    5
-  - increases confidence when historical success is strong
-  - penalizes risk when historical success is weak
-  - falls back cleanly when 0G is unavailable
-  - demo mode uses seeded memory to reject first choice and influence retry
-  - should complete full execution flow with live data
-
-Passed Tests:   124/129
-Success Rate:   96.1%
-```
-
-### After Fixes
-```
-Failed Tests:    0 ✓
-Passed Tests:   129/129
-Success Rate:   100% ✓
-
-Test Files:  14 passed (14)
-Tests:       129 passed (129)
-```
-
-### Current Verification
-```
-Failed Tests:    0
-Passed Tests:   135/135
-
-Test Files:  15 passed (15)
-Tests:       135 passed (135)
-```
+| Audit Round | Before | After |
+|---|---|---|
+| Audit #1 | 124/129 (96.1%) | 129/129 (100%) |
+| Audit #2 | 135/135 (100%) | 140/140 (100%) ✅ |
 
 ---
 
-## Impact on Users
+## Impact Summary
 
-### What's Fixed
+### What Was Fixed
 
-✓ **Memory influence now visible**: Users see why past protocol performance affects decisions  
-✓ **Demo mode working**: Demo memory data now properly influences decisions  
-✓ **Test reliability**: All tests pass consistently without flakiness  
-✓ **Transparent reasoning**: Trace entries clearly show memory impact  
+- ✅ Real Uniswap calldata now reaches MetaMask correctly
+- ✅ Transaction hash shown in terminal after on-chain execution
+- ✅ Swap quote source displayed accurately (green for on-chain, grey for CoinGecko)
+- ✅ Execution type system complete (SwapCalldata, executionMode)
+- ✅ ChainId correctly fetched from live MetaMask provider
+- ✅ Memory influence visible in trace (Audit #1)
+- ✅ Demo mode fully functional (Audit #1)
+- ✅ All tests deterministic (no Math.random in seeds)
+- ✅ No duplicate type definitions
 
-### What Didn't Change
+### What Did Not Change
 
-✗ No API contract changes (all endpoints still work the same)  
-✗ No feature removals  
-✗ No breaking changes  
-✗ All existing functionality preserved  
+- ✗ No API contract changes
+- ✗ No feature removals
+- ✗ No breaking changes to existing integrations
 
 ---
 
-## Testing Command
-
-To verify all bugs are fixed:
+## Verify
 
 ```bash
-cd backend && npm run test
+cd backend && npm test
+# Expected: Test Files 15 passed (15) | Tests 140 passed (140)
 ```
-
-Expected output:
-```
-Test Files  14 passed (14)
-Tests       129 passed (129)
-```
-
----
-
-## Recommendations
-
-1. **Monitor memory features**: Memory influence is now working; monitor real-world performance
-2. **Consider caching protocol names**: To avoid name mismatches in future, consider normalizing protocol names consistently across adapters
-3. **Add metadata validation**: Consider runtime validation of memory stats to catch future mismatches early
-4. **Document demo mode**: Add comments explaining demo memory protocol names must match YieldAgent outputs

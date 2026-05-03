@@ -31,7 +31,8 @@ export class ExecutorAgent extends BaseAgent {
     plan: YieldOption,
     trace: AgentTrace[],
     timestamp: number,
-    externalMetadata?: Record<string, unknown>
+    externalMetadata?: Record<string, unknown>,
+    context?: { wallet?: string }
   ): Promise<{ swapQuote: UniswapQuoteResult | null; nextTimestamp: number }> {
     let ts = timestamp;
     const tokenPair = this.getTokenPair(plan.protocol);
@@ -54,12 +55,20 @@ export class ExecutorAgent extends BaseAgent {
 
     let swapQuote: UniswapQuoteResult | null = null;
     try {
-      swapQuote = await this.uniswapAdapter.getQuote({
+      const quoteParams = {
         tokenIn: tokenPair.tokenIn,
         tokenOut: tokenPair.tokenOut,
         amount: '1000000000000000000', // 1 ETH in wei
         chainId: getQuoteChainId(),
-      });
+      };
+      swapQuote = await this.uniswapAdapter.getQuote(quoteParams);
+
+      if (swapQuote && context?.wallet) {
+        const calldata = await this.uniswapAdapter.getSwapCalldata(quoteParams, context.wallet);
+        if (calldata) {
+          swapQuote.calldata = calldata;
+        }
+      }
     } catch {
       swapQuote = null;
     }
@@ -94,7 +103,8 @@ export class ExecutorAgent extends BaseAgent {
     attempt: number,
     timestamp: number,
     externalMetadata?: Record<string, unknown>,
-    preparedSwapQuote?: UniswapQuoteResult | null
+    preparedSwapQuote?: UniswapQuoteResult | null,
+    context?: { wallet?: string }
   ): Promise<{ result: ExecutionResult; confidence: number }> {
     let baseExecConfidence = 0.85;
     if (attempt > 1) baseExecConfidence -= 0.1;
@@ -106,7 +116,7 @@ export class ExecutorAgent extends BaseAgent {
     let swapQuote = preparedSwapQuote;
 
     if (swapQuote === undefined) {
-      const quoteOutput = await this.quote(plan, trace, ts, externalMetadata);
+      const quoteOutput = await this.quote(plan, trace, ts, externalMetadata, context);
       swapQuote = quoteOutput.swapQuote;
       ts = quoteOutput.nextTimestamp;
     } else if (swapQuote) {
@@ -163,7 +173,9 @@ export class ExecutorAgent extends BaseAgent {
 
     // Trace: clearly state what happened and that user signature is required
     const finalMsg = swapQuote
-      ? `Prepared swap transaction via Uniswap (awaiting user signature) — estimated ${swapQuote.amountOut} ${tokenPair.tokenOut} via ${swapQuote.route}`
+      ? swapQuote.calldata
+        ? `Prepared swap transaction via Uniswap (ready for execution) — estimated ${swapQuote.amountOut} ${tokenPair.tokenOut} via ${swapQuote.route}`
+        : `Prepared swap quote via Uniswap (awaiting execution setup) — estimated ${swapQuote.amountOut} ${tokenPair.tokenOut} via ${swapQuote.route}`
       : `Prepared deposit on ${plan.protocol} at ${plan.apy}% APY (no swap quote available — will use direct deposit)`;
     trace.push(
       this.log(

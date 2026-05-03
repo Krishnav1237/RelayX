@@ -20,7 +20,7 @@ import { AppBackground } from '@/components/app-background';
 import { ExecutionFloatingPanel } from '@/components/execution-floating-panel';
 import { Navbar } from '@/components/navbar';
 import { useWalletStore } from '@/lib/wallet';
-import { switchToSepolia, formatAddress } from '@/lib/wallet-actions';
+import { switchToSepolia, formatAddress, submitSwapTransaction, getCurrentChainId } from '@/lib/wallet-actions';
 import {
   buildTerminalStatusEvents,
   loadExecutionSession,
@@ -193,6 +193,7 @@ export default function Dashboard() {
     const context: ExecutionRequestContext = {};
     if (demoMode) context.demo = true;
     if (debugMode) context.debug = true;
+    if (address) context.wallet = address;
     setLastRequestContext(context);
 
     const body: ExecutionRequest =
@@ -251,6 +252,37 @@ export default function Dashboard() {
     setResultPanelDismissed(false);
 
     try {
+      // 1. If we have real calldata from Uniswap, execute the transaction first via MetaMask
+      const synthTraces: AgentTrace[] = [];
+      if (response.final_result.swap?.calldata && address) {
+        // Fetch the actual live chainId from MetaMask instead of guessing
+        let chainId = 11155111; // default to Sepolia
+        try {
+          chainId = await getCurrentChainId();
+        } catch {
+          // keep Sepolia default if provider unavailable
+        }
+        try {
+          const swapResult = await submitSwapTransaction(
+            response.final_result.swap.calldata,
+            address,
+            chainId
+          );
+          // Record synthetic trace — we'll merge it with backend traces below
+          synthTraces.push({
+            agent: 'executor.relayx.eth',
+            step: 'execute',
+            message: `Transaction broadcasted on-chain! Hash: ${swapResult.txHash}`,
+            metadata: { txHash: swapResult.txHash, explorerUrl: swapResult.explorerUrl, chainId },
+            timestamp: Date.now(),
+          });
+        } catch (err) {
+          // User rejected or transaction failed — abort entirely
+          throw new Error(`Transaction failed or rejected: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      // 2. Confirm execution on backend to store history on 0G Galileo
       const res = await fetch('/api/execute/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -262,14 +294,17 @@ export default function Dashboard() {
       }
 
       const data = normalizeExecutionResponse(await res.json());
-      const newTraces = data.trace.slice(visibleTraces.length);
+      // Merge synthetic MetaMask traces with backend traces so they aren't overwritten
+      const backendNewTraces = data.trace.slice(visibleTraces.length);
+      const mergedNewTraces = [...synthTraces, ...backendNewTraces];
+      const queuedTraces = mergedNewTraces.length > 0 ? mergedNewTraces : data.trace;
       setResponse(data);
-      setStreamQueue(newTraces.length > 0 ? newTraces : data.trace);
+      setStreamQueue(queuedTraces);
       saveExecutionLog(data);
       saveExecutionSession(
         getSessionSnapshot({
           response: data,
-          streamQueue: newTraces.length > 0 ? newTraces : data.trace,
+          streamQueue: queuedTraces,
           isStreaming: true,
           showSummary: false,
           approvalCancelled: false,

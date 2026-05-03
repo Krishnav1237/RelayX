@@ -203,21 +203,22 @@ export class ZeroGMemoryAdapter {
   }
 
   private seedStats(): void {
-    type SeedEntry = [string, number, number, number, number];
+    type SeedEntry = [string, number, number, number, number, number];
     const seeds: SeedEntry[] = [
-      // [protocol, successCount, totalCount, apyTotal, confidenceTotal]
-      ['aave',     8,  10, 42.5, 7.8],
-      ['compound', 6,   8, 25.6, 6.2],
-      ['lido',     9,  10, 58.1, 8.6],
-      ['morpho',   5,   7, 43.4, 6.9],
-      ['spark',    7,   9, 43.2, 7.4],
+      // [protocol, successCount, totalCount, apyTotal, confidenceTotal, ageOffsetMs]
+      ['aave',     8,  10, 42.5, 7.8, 86400000 * 1],
+      ['compound', 6,   8, 25.6, 6.2, 86400000 * 2],
+      ['lido',     9,  10, 58.1, 8.6, 86400000 * 3],
+      ['morpho',   5,   7, 43.4, 6.9, 86400000 * 4],
+      ['spark',    7,   9, 43.2, 7.4, 86400000 * 5],
     ];
 
-    for (const [protocol, successCount, totalCount, apyTotal, confidenceTotal] of seeds) {
+    const now = Date.now();
+    for (const [protocol, successCount, totalCount, apyTotal, confidenceTotal, ageOffsetMs] of seeds) {
       this.protocolStats.set(protocol, {
         successCount,
         totalCount,
-        lastUsed: Date.now() - Math.random() * 86400000 * 7,
+        lastUsed: now - ageOffsetMs,
         apyTotal,
         confidenceTotal,
       });

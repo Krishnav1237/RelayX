@@ -7,20 +7,23 @@ RelayX follows a **multi-agent orchestration pattern** with deterministic decisi
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Frontend (Next.js)                         │
-│  Dashboard → /api/analyze → User Review → /api/execute/confirm  │
+│  Dashboard → /api/analyze → MetaMask Sign → /api/execute/confirm│
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              Backend API (Express, Port 3001)                   │
 ├─────────────────────────────────────────────────────────────────┤
-│  POST /analyze      – analyze intent + get approval            │
-│  POST /execute      – analyze + execute in one call            │
-│  POST /execute/confirm – execute after user approval           │
-│  GET /health        – basic health check                       │
-│  GET /axl-health    – AXL network status                       │
-│  GET /yield-health  – DefiLlama availability                   │
-│  GET /ens-health    – ENS resolution capability                │
+│  POST /analyze         – analyze intent + build SwapCalldata    │
+│  POST /execute         – analyze + execute in one call          │
+│  POST /execute/confirm – store history on 0G Galileo after Tx   │
+│  GET  /health               – overall server status             │
+│  GET  /integration-health   – axl, uniswap, memory, ens        │
+│  GET  /axl-health           – AXL network status                │
+│  GET  /yield-health         – DefiLlama availability            │
+│  GET  /ens-health           – ENS resolution capability         │
+│  GET  /quote-health         – Uniswap QuoterV2 status           │
+│  GET  /memory-health        – 0G Galileo storage status         │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
            ┌───────────────┼───────────────┐
@@ -89,21 +92,22 @@ User Request: "find best yield on ETH"
       │
       ├─ Step 5: ExecutorAgent.quote()
       │  └─ Fetch swap quote (Uniswap or CoinGecko)
+      │  └─ Generate `SwapCalldata` bound to `context.wallet`
       │
-      └─ Response: {approval_id, trace[], status: "pending_approval"}
-                   (User must confirm with approval_id)
+      └─ Response: {approval_id, trace[], status: "pending_approval", swap: { calldata }}
+                   (Frontend prompts MetaMask to sign and send `eth_sendTransaction`)
 
-/execute/confirm endpoint
+/execute/confirm endpoint (Called ONLY if MetaMask Tx succeeds)
       │
       ├─ Step 6: Retrieve approved plan
       │  └─ Look up pending execution by approval_id
       │
       ├─ Step 7: ExecutorAgent.execute()
-      │  └─ Execute deposit on selected protocol
+      │  └─ Log successful on-chain execution
       │  └─ Broadcast execution_signal via AXL
       │
       ├─ Step 8: Persist memory
-      │  └─ Store execution outcome for protocol
+      │  └─ Store execution outcome to 0G Galileo
       │  └─ Update success rates
       │
       └─ Response: {final_result, trace[], status: "success"}
@@ -152,34 +156,52 @@ User Request: "find best yield on ETH"
 ```typescript
 {
   intent: string;
-  trace: AgentTrace[];         // Full execution trace
+  trace: AgentTrace[];
   final_result: {
-    protocol: string;
-    apy: string;              // e.g., "4.2%"
-    action: "deposit";
-    status: "pending_approval" | "success" | "failed";
-    attempt: number;
-    swap?: UniswapQuoteResult;
+    protocol:       string;
+    apy:            string;      // e.g. "4.2%"
+    action:         "deposit";
+    status:         "pending_approval" | "success" | "failed";
+    attempt:        number;
+    executionMode?: "prepared" | "executed";
+    swap?: {
+      amountOut:   string;       // e.g. "1823.45 USDC"
+      priceImpact: number;
+      gasEstimate: string;
+      route:       string;       // e.g. "ETH → [V3 0.05%] → USDC"
+      source:      "uniswap-v3-quoter" | "coingecko" | "cache";
+      calldata?: {
+        to:          string;     // Uniswap SwapRouter02
+        data:        string;     // ABI-encoded exactInputSingle
+        value:       string;     // ETH in wei
+        gasEstimate: string;
+        tokenIn:     string;
+        tokenOut:    string;
+        amountOut:   string;
+        router:      string;
+        deadline:    number;     // Unix timestamp
+      };
+    };
   };
   summary: {
-    selectedProtocol: string;
-    initialProtocol: string;
-    finalProtocol: string;
-    wasRetried: boolean;
-    totalSteps: number;
-    confidence: number;       // 0.0–0.95
-    explanation: string;
+    selectedProtocol:  string;
+    initialProtocol:   string;
+    finalProtocol:     string;
+    wasRetried:        boolean;
+    totalSteps:        number;
+    confidence:        number;   // 0.0–0.95
+    explanation:       string;
     decisionImpact: {
-      ens: string;            // ENS impact description
-      axl: string;            // AXL impact description
-      memory?: string;        // Memory impact description
+      ens:     string;
+      axl:     string;
+      memory?: string;
     };
   };
   approval?: {
-    id: string;
-    expiresAt: number;        // Unix ms, default TTL 5 min
+    id:        string;
+    expiresAt: number;           // Unix ms, default TTL 5 min
   };
-  debug?: {...};              // Only if context.debug=true
+  debug?: { ... };               // Only if context.debug=true
 }
 ```
 
@@ -277,5 +299,5 @@ If retry also fails → return rejection reason in summary.
 
 - `RELAYX_CHAIN=mainnet|sepolia` selects the ENS/reverse-lookup network.
 - `RELAYX_AGENT_ENS_ROOT=relayx.eth` generates `system.relayx.eth`, `yield.relayx.eth`, `risk.relayx.eth`, and `executor.relayx.eth`.
-- `RELAYX_DEFAULT_ENS_SOURCES` can point reputation checks at deployed RelayX agent subdomains for Sepolia demos.
-- DefiLlama yield discovery remains live market data (`DEFILLAMA_CHAIN=Ethereum` by default). Testnet demos do not submit transactions.
+- DefiLlama yield discovery remains live market data (`DEFILLAMA_CHAIN=Ethereum` by default).
+- For testnet demos, `SwapCalldata` is generated for Sepolia Uniswap V3 and executed via MetaMask prior to 0G Galileo storage.

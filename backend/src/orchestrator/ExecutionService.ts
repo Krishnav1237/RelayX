@@ -414,7 +414,7 @@ export class ExecutionService {
     ts += 10;
 
     // Step 4: Prepare swap quote only. Final execution requires explicit user approval.
-    const quoteOutput = await this.executorAgent.quote(finalPlan, trace, ts);
+    const quoteOutput = await this.executorAgent.quote(finalPlan, trace, ts, undefined, request.context);
     ts = quoteOutput.nextTimestamp;
     const preparedSwapQuote = quoteOutput.swapQuote;
 
@@ -668,7 +668,8 @@ export class ExecutionService {
       pending.attempt,
       ts,
       traceMetadata,
-      pending.preparedSwapQuote
+      pending.preparedSwapQuote,
+      pending.request.context
     );
     ts = trace[trace.length - 1]!.timestamp + 10;
     const finalResult = executorOutput.result;

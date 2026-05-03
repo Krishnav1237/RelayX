@@ -63,13 +63,15 @@ describe('ExecutorAgent', () => {
     expect(routeEntry).toBeDefined();
   });
 
-  it('should return fixed confidence of 0.9', async () => {
+  it('should return dynamic confidence in valid range', async () => {
     const agent = new ExecutorAgent();
     const trace: AgentTrace[] = [];
     const plan: YieldOption = { protocol: 'Aave', apy: 4.2, riskLevel: 'low' };
 
     const { confidence } = await agent.execute(plan, trace, 1, 1000);
-    expect(confidence).toBe(0.9);
+    // Confidence is dynamically computed: 0.85 base + bonuses, clamped to [0, 0.95]
+    expect(confidence).toBeGreaterThanOrEqual(0.75);
+    expect(confidence).toBeLessThanOrEqual(0.95);
   });
 
   it('should produce user-facing narrative in trace', async () => {

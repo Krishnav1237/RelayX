@@ -152,7 +152,7 @@ async quote(
 ): Promise<{ swapQuote: UniswapQuoteResult | null, nextTimestamp: number }>
 ```
 
-Fetches swap quote from Uniswap or CoinGecko.
+Fetches swap quote from Uniswap or CoinGecko. If `context.wallet` is provided, generates actual `SwapCalldata` bound to the user's wallet address.
 
 ```typescript
 async execute(
@@ -161,7 +161,8 @@ async execute(
   attempt: number,
   timestamp: number,
   externalMetadata?: Record<string, unknown>,
-  preparedSwapQuote?: UniswapQuoteResult | null
+  preparedSwapQuote?: UniswapQuoteResult | null,
+  context?: { wallet?: string }
 ): Promise<{ result: ExecutionResult, confidence: number }>
 ```
 
@@ -247,6 +248,12 @@ async getQuote(params: {
   amount: string,
   chainId?: number
 }): Promise<UniswapQuoteResult | null>
+
+async getSwapCalldata(
+  params: QuoteParams,
+  recipient: string,
+  slippageBps?: number
+): Promise<SwapCalldata | null>
 ```
 
 Live Uniswap API quotes are only attempted on mainnet token metadata. Sepolia/testnet demos keep the quote step functional through CoinGecko market-data fallback.

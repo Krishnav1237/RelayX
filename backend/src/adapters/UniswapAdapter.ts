@@ -16,7 +16,7 @@
 
 import { createPublicClient, http, parseUnits, formatUnits } from 'viem';
 import { mainnet, sepolia } from 'viem/chains';
-import type { UniswapQuoteResult } from '../types';
+import type { UniswapQuoteResult, SwapCalldata } from '../types';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -104,18 +104,6 @@ export interface QuoteParams {
   tokenOut: string;
   amount: string;    // raw integer string (wei/units)
   chainId?: number;
-}
-
-export interface SwapCalldata {
-  to: string;
-  data: string;
-  value: string;
-  gasEstimate: string;
-  tokenIn: string;
-  tokenOut: string;
-  amountOut: string;
-  router: string;
-  deadline: number;
 }
 
 // ─── Cache ───────────────────────────────────────────────────────────────────

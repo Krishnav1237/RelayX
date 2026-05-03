@@ -4,13 +4,13 @@ Known constraints and workarounds.
 
 ## Runtime Limitations
 
-### 1. No On-Chain Execution
+### 1. Testnet-Only Execution (Currently Sepolia)
 
-**Issue**: Deposits are simulated. No actual blockchain transactions.
+**Issue**: RelayX executes real transactions, but is currently restricted to testnets (Sepolia) for safety.
 
-**Why**: RelayX is a **decision engine**, not a trading bot. Execution is design-limited for safety.
+**Why**: Production-grade mainnet execution requires extensive audit and slippage protection. The current system relies on Uniswap QuoterV2 for pricing, but executes without advanced MEV protection.
 
-**Workaround**: Integrate with a signing library (ethers.js/viem) to submit actual transactions.
+**Workaround**: Ensure your MetaMask is connected to Sepolia to execute generated `SwapCalldata`.
 
 ### 2. ENS Data Lag
 
@@ -79,8 +79,8 @@ Known constraints and workarounds.
 - **Uniswap API may timeout**: Network issues.
   - Fallback: Uses CoinGecko prices (slower but works).
 
-- **No transaction slippage protection**: RelayX prepares quotes only; it does not submit swaps.
-  - Workaround: Add signer-driven execution with explicit slippage bounds if RelayX becomes a transaction bot.
+- **No advanced slippage/MEV protection**: RelayX prepares `SwapCalldata` with a fixed default slippage (0.5%).
+  - Workaround: A future release should implement dynamic slippage calculations based on CoinGecko volatility metrics.
 
 ### AXLAdapter
 
@@ -100,13 +100,13 @@ Known constraints and workarounds.
 
 **Workaround**: Add Server-Sent Events (SSE) or WebSocket for live updates.
 
-### 2. No Wallet Integration
+### 2. Basic Wallet Integration
 
-**Issue**: No MetaMask/WalletConnect integration.
+**Issue**: MetaMask integration is basic (injected `window.ethereum` only).
 
-**Why**: Frontend is UI-only; no on-chain actions.
+**Why**: The frontend focuses on the execution flow and does not support WalletConnect or multi-wallet frameworks.
 
-**Workaround**: Add wallet connection for user context (used in ENS reverse lookup).
+**Workaround**: Use standard MetaMask browser extension.
 
 ### 3. LocalStorage Only
 
@@ -262,10 +262,8 @@ Known constraints and workarounds.
 Near-term improvements:
 
 - [ ] Add more yield sources (Yearn, Curve)
-- [ ] Extend to other chains
-- [ ] Add real on-chain execution
+- [ ] Extend execution to Arbitrum/Optimism
 - [ ] Implement WebSocket for live traces
-- [ ] Add wallet integration
 - [ ] Backend session persistence
 
 ---

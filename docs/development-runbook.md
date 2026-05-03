@@ -1,10 +1,19 @@
 # Development Runbook
 
-Quick start for local development, testing, and debugging.
+Local setup, debugging, and deployment guide for RelayX.
+
+---
 
 ## Local Setup
 
-### 1. Clone & Install
+### 1. Prerequisites
+
+- Node.js 18+
+- npm 9+
+- MetaMask browser extension (for on-chain execution)
+- Sepolia testnet ETH (get at [sepoliafaucet.com](https://sepoliafaucet.com))
+
+### 2. Clone & Install
 
 ```bash
 git clone https://github.com/Krishnav1237/RelayX.git
@@ -13,122 +22,140 @@ cd backend && npm install
 cd ../frontend && npm install
 ```
 
-### 2. Environment Configuration
-
-**Backend** (`backend/.env`):
+### 3. Environment Configuration
 
 ```bash
-# Chain and RPC for ENS resolution (Alchemy recommended, public fallback available)
-RELAYX_CHAIN=mainnet
-ALCHEMY_MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
-ALCHEMY_SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-RELAYX_RPC_URL=
+cd backend
+cp .env.example .env
+```
 
-# RelayX agent identities and ENS source defaults
+Open `backend/.env` and fill in the values:
+
+```bash
+# ── Chain & RPC ───────────────────────────────────────────────────────────────
+# Chain for ENS resolution and Uniswap quoting: mainnet | sepolia
+RELAYX_CHAIN=sepolia
+
+# Alchemy free-tier RPC (recommended for reliable ENS + QuoterV2)
+ALCHEMY_SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+ALCHEMY_MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+# Get free keys at: https://dashboard.alchemy.com
+
+# ── ENS Identity ──────────────────────────────────────────────────────────────
 RELAYX_AGENT_ENS_ROOT=relayx.eth
 RELAYX_DEFAULT_ENS_SOURCES=system.relayx.eth,ens.eth,nick.eth
+ENS_CACHE_TTL_MS=300000
+ENS_TEXT_RECORD_KEYS=description,url,com.twitter,com.github
 
-# Safety controls
+# ── Gensyn AXL Peer Network ───────────────────────────────────────────────────
+# Real AXL binary (optional): https://github.com/gensyn-ai/axl
+AXL_NODE_URL=http://127.0.0.1:9002
+# Sim node fallback (auto-started by npm run dev:full)
+AXL_BASE_URL=http://localhost:3005
+AXL_TIMEOUT_MS=1500
+
+# ── Uniswap V3 QuoterV2 (no API key — uses your Alchemy RPC) ─────────────────
+# Sepolia QuoterV2: 0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3 (auto-selected)
+# Mainnet QuoterV2: 0x61fFE014bA17989E743c5F6cB21bF9697530B21e (auto-selected)
+# Override: UNISWAP_QUOTER_V2_ADDRESS=0x...
+# COINGECKO_API_KEY=CG-...    # optional, raises rate limits
+
+# ── 0G Galileo Testnet (chain 16602) — Backend-only ──────────────────────────
+# Get tokens at: https://faucet.0g.ai  |  Explorer: https://explorer.0g.ai
+ZEROG_EVM_RPC=https://evmrpc-testnet.0g.ai
+ZEROG_INDEXER_URL=https://indexer-storage-testnet-turbo.0g.ai
+ZEROG_PRIVATE_KEY=0x_YOUR_TESTNET_PRIVATE_KEY
+ZEROG_CHAIN_ID=16602
+# Leave ZEROG_PRIVATE_KEY empty to use in-memory fallback (no 0G needed)
+
+# ── Safety & Rate Limits ──────────────────────────────────────────────────────
 APPROVAL_TTL_MS=300000
 MAX_INTENT_LENGTH=1000
 RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX_REQUESTS=120
 
-# ENS controls
-ENS_CACHE_TTL_MS=300000
-ENS_TEXT_RECORD_KEYS=description,url,com.twitter,com.github
-
-# AXL node URL (default: localhost:3005)
-AXL_BASE_URL=http://localhost:3005
-
-# Optional: LLM explanations (OpenRouter priority > Groq)
-OPENROUTER_API_KEY=sk-...
-GROQ_API_KEY=gsk-...
-
-# Optional: Uniswap API (fallback to CoinGecko)
-UNISWAP_API_KEY=...
-UNISWAP_QUOTE_CHAIN_ID=
-
-# Optional: yield discovery controls
+# ── Yield Discovery ───────────────────────────────────────────────────────────
 YIELD_SUPPORTED_ASSETS=ETH,USDC,USDT,DAI,WETH,WBTC,STETH
 DEFILLAMA_CHAIN=Ethereum
 
-# Optional: 0G Memory storage
-ZEROG_MEMORY_KV_URL=...
-ZEROG_MEMORY_LOG_URL=...
+# ── Optional LLM (OpenRouter priority > Groq) ─────────────────────────────────
+# OPENROUTER_API_KEY=sk-or-...
+# GROQ_API_KEY=gsk_...
+
+# ── Server ────────────────────────────────────────────────────────────────────
+FRONTEND_URL=http://localhost:3000
+PORT=3001
 ```
 
-**Frontend** (`frontend/.env.local`):
+**Frontend** (`frontend/.env.local`) — usually not needed:
 
 ```bash
-# Usually auto-discovered if backend is on localhost:3001
+# Only needed if backend is not on localhost:3001
 NEXT_PUBLIC_API_BASE=http://localhost:3001
 ```
 
-### 3. Start Services
+### 4. Start Services
 
-**Terminal 1**: Start AXL node (optional but recommended)
-
-```bash
-cd backend
-npm run axl:node
-```
-
-Listens on `http://localhost:3005` (and simulates :3006, :3007 locally).
-
-**Terminal 2**: Start backend
+**Option A — All in one (recommended)**:
 
 ```bash
 cd backend
-npm run dev
+npm run dev:full    # starts backend + AXL sim node together
 ```
 
-API available on `http://localhost:3001`.
-
-**Terminal 3**: Start frontend
+Then in another terminal:
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-Dashboard available on `http://localhost:3000`.
+**Option B — Manually**:
 
-### 4. Verification
+```bash
+# Terminal 1: AXL sim node
+cd backend && npm run axl:node
 
-Visit `http://localhost:3000` and submit a request:
+# Terminal 2: Backend
+cd backend && npm run dev
 
+# Terminal 3: Frontend
+cd frontend && npm run dev
 ```
-Prompt: "find best yield on ETH"
+
+### 5. Verify Setup
+
+```bash
+curl http://localhost:3001/health
+# Expected: {"status":"ok","chain":"sepolia","chainId":11155111}
+
+curl http://localhost:3001/integration-health
+# Expected: {"axl":"ok","uniswap":"fallback","memory":"fallback","ens":"ok"}
 ```
 
-Should see:
-- **Green loading** → agents working
-- **Trace entries** → decisions made
-- **Summary** → selected protocol + confidence
-- **Approve button** → ready to execute
+- `uniswap: fallback` = CoinGecko fallback active (set `ALCHEMY_SEPOLIA_RPC_URL` for `ok`)
+- `memory: fallback` = in-memory mode (set `ZEROG_PRIVATE_KEY` for `ok`)
+
+Open `http://localhost:3000` and submit: `find best yield on ETH`
+
+---
 
 ## Testing
 
-### Run Full Test Suite
+### Run Full Suite
 
 ```bash
 cd backend
-npm run test
+npm test
+# Expected: Test Files 15 passed (15) | Tests 140 passed (140)
 ```
 
-Runs **Vitest** with all test files in `src/__tests__/`:
-
-- Agent logic (YieldAgent, RiskAgent, ExecutorAgent)
-- Adapter behavior (ENS, AXL, Uniswap, memory)
-- Edge cases and bounds
-- End-to-end execution scenarios
-
-### Run Specific Test
+### Run Specific File
 
 ```bash
-npm run test -- YieldAgent.test.ts
-npm run test -- RiskAgent.test.ts
+npm test -- ExecutorAgent
+npm test -- UniswapAdapter
+npm test -- integration
 ```
 
 ### Watch Mode
@@ -137,169 +164,171 @@ npm run test -- RiskAgent.test.ts
 npm run test:watch
 ```
 
-Re-run tests on file changes.
-
-### Test Coverage
+### Coverage
 
 ```bash
-npm run test -- --coverage
+npm test -- --coverage
 ```
+
+Test files and what they cover:
+
+| File | Covers |
+|---|---|
+| `integration.test.ts` | Full E2E pipeline with live data |
+| `hardening.test.ts` | Response shape, all agents present |
+| `ExecutorAgent.test.ts` | Swap quote, calldata, execution mode |
+| `RiskAgent.test.ts` | ENS/AXL/memory influence, approve/reject |
+| `YieldAgent.test.ts` | Intent parsing, protocol selection, retry |
+| `UniswapAdapter.test.ts` | QuoterV2, CoinGecko fallback |
+| `AXLAdapter.test.ts` | Non-blocking broadcast, sim node |
+| `ZeroGMemoryAdapter.test.ts` | Memory storage, protocol stats |
+| `ENSAdapter.test.ts` | ENS resolution, cache |
+| `ExecutionService.test.ts` | Orchestration, approval flow |
+
+---
 
 ## Debugging
 
 ### 1. Enable Debug Context
 
-Add `debug: true` to request:
-
 ```bash
-curl -X POST http://localhost:3001/execute \
+curl -X POST http://localhost:3001/analyze \
   -H "Content-Type: application/json" \
-  -d '{
-    "intent": "find best yield on ETH",
-    "context": { "debug": true }
-  }'
+  -d '{"intent": "find best yield on ETH", "context": {"debug": true}}'
 ```
 
-Response includes `debug` object with:
+Response `debug` block includes:
+- `confidenceBreakdown`: `{yield, risk, execution}`
+- `ensReputationScore`: computed 0.0–1.0 score
+- `ensInfluence`: tier + effect on decision
+- `axlInfluence`: peer approval ratio + impact
+- `memoryInfluence`: historical success rate used
 
-- `confidenceBreakdown`: {yield, risk, execution}
-- `ensReputationScore`: computed ENS score
-- `ensInfluence`: tier + effect
-- `axlInfluence`: approval ratio + decision impact
-- `memoryInfluence`: historical data used
-
-### 2. Console Logs
-
-Backend logs important milestones:
-
-```
-[BOOT] Chain: Ethereum Mainnet (1)
-[BOOT] Agent ENS root: relayx.eth
-[BOOT] ENS RPC: configured
-[BOOT] AXL base: http://localhost:3005
-[BOOT] Approval TTL: 300000ms
-[BOOT] Max intent length: 1000
-[CONTROLLER] Request received
-[ENS] Resolving: vitalik.eth
-[EXEC] ENS resolution complete: 0.85
-[EXEC] Execution complete
-[CONTROLLER] Response sent (245ms)
-```
-
-Filter for specific components:
+### 2. Console Log Filtering
 
 ```bash
-npm run dev 2>&1 | grep '\[ENS\]'
-npm run dev 2>&1 | grep '\[EXEC\]'
+# Watch ENS resolution
+npm run dev 2>&1 | grep '\[ENS'
+
+# Watch Uniswap quotes
+npm run dev 2>&1 | grep '\[UniswapAdapter\]\|\[UNISWAP\]'
+
+# Watch 0G storage
+npm run dev 2>&1 | grep '\[ZeroGMemory\]'
+
+# Watch AXL broadcast
+npm run dev 2>&1 | grep '\[AXL'
 ```
 
 ### 3. Trace Inspection
 
-Response includes `trace[]` with every agent step:
+Every response includes a `trace[]` array:
 
 ```javascript
-trace.forEach(entry => {
-  console.log(entry.agent, entry.step, entry.message);
-  console.log(entry.metadata);
-});
+trace.forEach(e => console.log(`[${e.agent}] ${e.step} → ${e.message}`));
 ```
 
-Key steps:
+Key trace steps:
 
-- **system.relayx.eth / start** → ENS context built
-- **yield.relayx.eth / analyze** → Intent understood
-- **yield.relayx.eth / evaluate** → Options evaluated
-- **risk.relayx.eth / evaluate** → Risk checked
-- **risk.relayx.eth / approve** or **reject** → Decision made
-- **system.relayx.eth / retry** → Retry triggered (if needed)
-- **executor.relayx.eth / quote** → Swap quote fetched
-- **executor.relayx.eth / execute** → Deposit executed
+| Agent | Step | Meaning |
+|---|---|---|
+| `system.relayx.eth` | `start` | ENS context built, reputation computed |
+| `yield.relayx.eth` | `analyze` | Intent parsed, asset extracted |
+| `yield.relayx.eth` | `evaluate` | Protocol options ranked |
+| `risk.relayx.eth` | `evaluate` | Risk score computed |
+| `risk.relayx.eth` | `approve` or `reject` | Final risk decision |
+| `system.relayx.eth` | `retry` | Second protocol selected |
+| `executor.relayx.eth` | `quote` | Uniswap/CoinGecko quote fetched |
+| `executor.relayx.eth` | `execute` | On-chain transaction confirmed |
 
 ### 4. Demo Mode
 
-Test without real ENS/yield/AXL:
+Exercises retry path with seeded memory without needing real ENS/AXL:
 
 ```bash
-curl -X POST http://localhost:3001/execute \
+curl -X POST http://localhost:3001/analyze \
   -H "Content-Type: application/json" \
-  -d '{
-    "intent": "find best yield on ETH",
-    "context": { "demo": true }
-  }'
+  -d '{"intent": "find best yield on ETH", "context": {"demo": true}}'
 ```
 
-Demo uses seeded memory:
+Demo memory seeds:
+- Morpho: 42% success rate → rejected on first attempt
+- Aave: 92% success rate → approved on retry
 
-- Morpho: 42% success rate → rejected
-- Aave V3: 92% success rate → approved on retry
+### 5. Check Swap Calldata Generation
 
-### 5. Sepolia ENS Agent Demo
-
-For testnet demos, register or configure RelayX agent subdomains on Sepolia:
-
-- `system.relayx.eth`
-- `yield.relayx.eth`
-- `risk.relayx.eth`
-- `executor.relayx.eth`
-
-Then run the backend with:
+Pass a wallet address to trigger calldata generation:
 
 ```bash
-RELAYX_CHAIN=sepolia
-RELAYX_AGENT_ENS_ROOT=relayx.eth
-ALCHEMY_SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+curl -X POST http://localhost:3001/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"intent": "swap ETH for USDC", "context": {"wallet": "0xYOUR_ADDRESS"}}'
 ```
 
-ENS resolution and wallet reverse lookup will use Sepolia. Yield data still comes from DefiLlama market data and quote fallback still uses CoinGecko, so the demo remains safe and deterministic without on-chain deposits.
+Look for `final_result.swap.calldata` in the response:
+```json
+{
+  "to": "0x3bFA4769...",     // Uniswap SwapRouter02
+  "data": "0x...",            // ABI-encoded exactInputSingle
+  "value": "1000000000000000000",
+  "gasEstimate": "200000",
+  "deadline": 1234567890
+}
+```
+
+---
 
 ## Common Issues
 
-### Issue: ENS resolution hangs
+### ENS resolution hangs / times out
+```
+Symptom: No trace entries after "start" step, request times out.
+Fix:     Set ALCHEMY_SEPOLIA_RPC_URL (or MAINNET). ENS failures are graceful — check logs for [ENS TIMEOUT].
+```
 
-**Symptom**: Request times out, no trace entries after `start` step.
+### No yield data
+```
+Symptom: status: "failed" — "Yield data unavailable"
+Fix:     Check DefiLlama: curl https://yields.llama.fi/pools
+         Backend logs cache hits: [YieldData] Using cached data
+```
 
-**Fix**:
-1. Check `RELAYX_CHAIN` and the matching RPC env (`ALCHEMY_MAINNET_RPC_URL` or `ALCHEMY_SEPOLIA_RPC_URL`)
-2. Verify RPC endpoint is accessible: `curl -I https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY`
-3. Check backend logs for `[ENS TIMEOUT]`
-4. ENS failures are graceful; request should still complete
+### AXL not responding
+```
+Symptom: Trace shows "AXL: no peers available" (execution continues fine)
+Fix:     Start sim node: npm run dev:full
+         Verify: curl http://localhost:3005/health
+```
 
-### Issue: No yield data
+### Uniswap: fallback (CoinGecko)
+```
+Symptom: integration-health shows "uniswap: fallback"
+Fix:     Set ALCHEMY_SEPOLIA_RPC_URL so QuoterV2 can be called on-chain.
+         Without it, CoinGecko spot prices are used — quotes still work.
+```
 
-**Symptom**: `"status": "failed"` with message "Yield data unavailable".
+### Memory: fallback (in-memory)
+```
+Symptom: memory-health shows "mode: in-memory"
+Fix:     Set ZEROG_PRIVATE_KEY + fund wallet at faucet.0g.ai
+         Without it, execution history is stored in-process (resets on restart).
+```
 
-**Fix**:
-1. Check DefiLlama: `curl https://yields.llama.fi/pools`
-2. Backend should log cache hits: `[YieldData] Using cached data`
-3. On error, frontend will display reason
+### MetaMask transaction rejected
+```
+Symptom: Dashboard shows "Transaction failed or rejected"
+Effect:  Nothing written to 0G backend — data purity preserved.
+Fix:     Re-submit the intent and try again.
+```
 
-### Issue: AXL not responding
+### Approval expired
+```
+Symptom: 404 — "Approval request expired or not found"
+Fix:     Re-submit intent (approval TTL = 5 min by default).
+         Set APPROVAL_TTL_MS to increase window.
+```
 
-**Symptom**: Trace shows `"AXL: no peers available"` but execution continues.
-
-**Fix**:
-1. Start AXL node: `npm run axl:node`
-2. Verify on `http://localhost:3005/health`
-3. AXL is optional; requests work without it
-
-### Issue: LLM explanations not showing
-
-**Symptom**: `summary.explanation` is template string, not LLM-generated.
-
-**Fix**:
-1. Check `OPENROUTER_API_KEY` or `GROQ_API_KEY` is set
-2. Verify API key is valid (test with curl)
-3. Check backend logs for `[LLM]` entries
-4. LLM is optional; fallback to templates works
-
-### Issue: Swap quote is null
-
-**Symptom**: `final_result.swap` is missing even with Uniswap enabled.
-
-**Fix**:
-1. Check Uniswap API is accessible
-2. Backend logs show which fallback was used (`uniswap` vs `coingecko` vs `cache`)
-3. Quotes are optional; deposit still executes
+---
 
 ## Build & Deployment
 
@@ -307,92 +336,83 @@ ENS resolution and wallet reverse lookup will use Sepolia. Yield data still come
 
 ```bash
 cd backend
-npm run build
+npm run build    # compiles TypeScript → dist/index.js
+npm start        # runs compiled output
 ```
-
-Compiles TypeScript → `dist/index.js`.
 
 ### Frontend Build
 
 ```bash
 cd frontend
-npm run build
+npm run build    # Next.js production build → .next/
+npm start        # serves production build
 ```
 
-Generates Next.js static/serverless export in `.next/`.
+### Environment Variables for Production
 
-### Docker (Optional)
+Set these in your deployment platform (Vercel, Railway, Fly.io, etc.):
 
-Add `Dockerfile` in `backend/` and `frontend/` as needed.
+**Required:**
+- `RELAYX_CHAIN=sepolia`
+- `ALCHEMY_SEPOLIA_RPC_URL`
 
-**Backend Dockerfile** (example):
+**Strongly recommended:**
+- `ZEROG_PRIVATE_KEY` (0G Galileo storage)
+- `AXL_NODE_URL` (real AXL binary endpoint)
 
+**Optional:**
+- `OPENROUTER_API_KEY` / `GROQ_API_KEY` (LLM explanations)
+- `COINGECKO_API_KEY` (raises CoinGecko rate limits)
+- `FRONTEND_URL` (CORS restriction; default `*`)
+
+### Docker (Example)
+
+**Backend:**
 ```dockerfile
-FROM node:18-alpine
+FROM node:20-alpine
 WORKDIR /app
+COPY package*.json ./
+RUN npm ci
 COPY . .
-RUN npm install && npm run build
+RUN npm run build
 EXPOSE 3001
 CMD ["node", "dist/index.js"]
 ```
 
-**Frontend Dockerfile** (example):
-
+**Frontend:**
 ```dockerfile
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
+COPY package*.json ./
+RUN npm ci
 COPY . .
-RUN npm install && npm run build
+RUN npm run build
 
-FROM node:18-alpine
+FROM node:20-alpine
 WORKDIR /app
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/package.json ./
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+CMD ["npm", "start"]
 ```
 
-### Environment for Production
-
-Set via deployment platform (Vercel, Railway, AWS Lambda, etc.):
-
-- `ALCHEMY_MAINNET_RPC_URL`
-- `ALCHEMY_SEPOLIA_RPC_URL` (for `RELAYX_CHAIN=sepolia`)
-- `RELAYX_CHAIN`
-- `RELAYX_AGENT_ENS_ROOT`
-- `AXL_BASE_URL` (point to remote AXL node)
-- `MAX_INTENT_LENGTH`
-- `RATE_LIMIT_MAX_REQUESTS`
-- `OPENROUTER_API_KEY` (if using LLM)
-- `UNISWAP_API_KEY` (if using Uniswap)
-- `ZEROG_MEMORY_KV_URL` (if using 0G)
+---
 
 ## Code Style
 
-- **TypeScript**: Strict mode enabled
-- **Formatting**: Follows tsconfig/eslint rules
-- **Testing**: Vitest conventions
+- **TypeScript** strict mode everywhere
+- **Vitest** for all tests
+- Add tests for any new adapter or agent logic
+- Update the relevant doc in `/docs` when changing public behavior
+- All approval IDs, confidence values, and thresholds are configurable — avoid hardcoding
 
-### Linting (if added)
-
-```bash
-npm run lint          # Check
-npm run lint:fix      # Fix
-```
-
-## Commit & PR
-
-When making changes:
-
-1. **Run tests** locally: `npm run test`
-2. **Update docs** if behavior changes
-3. **Keep API contract stable** unless versioning is added
-4. **Test locally** with debug=true before submitting
+---
 
 ## Resources
 
-- [Architecture](./architecture.md) — System design
-- [Backend Design](./backend.md) — Agent/adapter internals
+- [Architecture](./architecture.md) — System design and execution lifecycle
 - [API Reference](./api-reference.md) — Endpoint schemas
-- [Current Limitations](./current-limitations.md) — Known issues
+- [Testing Guide](./testing-guide.md) — Step-by-step test playbook
+- [Current Limitations](./current-limitations.md) — Known constraints

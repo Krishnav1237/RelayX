@@ -1,180 +1,177 @@
 # RelayX
 
-> Autonomous DeFi agent system for intelligent yield farming with deterministic decision-making, on-chain reputation signals, and cross-node collaboration.
+> Autonomous DeFi agent system with real on-chain execution — deterministic decision-making, ENS reputation signals, Uniswap V3 swap routing, and 0G Galileo testnet storage.
 
-**Status**: Backend hardened for RelayX agent ENS subdomains, Sepolia ENS demos, 0G memory, and deterministic approval flow. Tests: 135/135 passing.
+**Status**: Production-grade testnet execution. Tests: **140/140 passing**.
 
 ## Overview
 
-RelayX is a production-ready agent orchestration framework built with:
+RelayX is an agent orchestration framework that analyzes yield intent, assesses risk, generates real Uniswap V3 `SwapCalldata`, presents it to the user for MetaMask signing on Sepolia, then stores the execution record on the 0G Galileo testnet.
 
-- **YieldAgent**: Analyzes user intent and fetches live yield data from DefiLlama
-- **RiskAgent**: Evaluates protocols against deterministic risk thresholds
-- **ExecutorAgent**: Prepares and executes deposits with swap quoting
-- **ENS Reputation Layer**: Uses real on-chain ENS data and RelayX agent subdomains as reputation signals
-- **AXL Integration**: Enables cross-node agent collaboration via a local infrastructure node
-- **Deterministic Logic**: Core decisions are rule-based (no LLM required); optional LLM for explanations
-- **Full Trace & Memory**: Complete execution history with confidence metrics and protocol success tracking
-- **Type-Safe API**: TypeScript backend (Express) + Next.js/React frontend
+| Agent / Layer | Role |
+|---|---|
+| **YieldAgent** | Parses intent, fetches live yield data from DefiLlama, selects best protocol |
+| **RiskAgent** | Evaluates APY vs risk thresholds using ENS reputation, AXL consensus, and memory signals |
+| **ExecutorAgent** | Generates Uniswap V3 swap quote + ABI-encoded `SwapCalldata` bound to the user's wallet |
+| **ENS Reputation** | Resolves user/wallet ENS on-chain; computes reputation score (0.0–1.0) |
+| **AXL Integration** | Broadcasts to Gensyn AXL peers for cross-node consensus (falls back to sim node) |
+| **Uniswap V3 QuoterV2** | On-chain price quotes via `quoteExactInputSingle`; CoinGecko fallback |
+| **0G Galileo Storage** | Writes execution records to 0G Galileo testnet (chain 16602) post-execution |
+| **MetaMask Execution** | Frontend triggers `eth_sendTransaction` on Sepolia before backend confirmation |
+
+---
 
 ## Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
-- npm or yarn
+- MetaMask browser extension (for on-chain execution)
+- Sepolia ETH ([sepoliafaucet.com](https://sepoliafaucet.com))
 
-### Backend Setup
+### 1. Install Dependencies
 
 ```bash
-cd backend
-npm install
-npm run dev
+cd RelayX/backend && npm install
+cd ../frontend && npm install
 ```
 
-Backend API runs on `http://localhost:3001`:
-- `POST /analyze` — Analyze intent, receive pending approval with trace
-- `POST /execute/confirm` — Execute approved plan
-- `POST /execute` — Convenience: analyze + execute in one call
-- `GET /health` — Server health
-- `GET /axl-health` — AXL infrastructure status
-- `GET /yield-health` — DefiLlama data availability
-- `GET /ens-health` — ENS resolution capability
-
-### Frontend Setup
+### 2. Configure Environment
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cd RelayX/backend
+cp .env.example .env
+# Edit .env — minimum required: RELAYX_CHAIN=sepolia, ALCHEMY_SEPOLIA_RPC_URL
 ```
 
-Frontend runs on `http://localhost:3000` and proxies `/api/*` to backend.
-
-### Optional: Local AXL Infrastructure Node
+### 3. Start Everything
 
 ```bash
-cd backend
-npm run axl:node
+# Terminal 1 — backend + AXL sim node
+cd backend && npm run dev:full
+
+# Terminal 2 — frontend
+cd ../frontend && npm run dev
 ```
 
-Starts AXL mock/relay node on `http://localhost:3005` (configurable via `AXL_BASE_URL`).
+- Backend: `http://localhost:3001`
+- Frontend: `http://localhost:3000`
 
-## Execution Lifecycle
+---
 
-### Analyze → Approve → Execute Flow
+## Execution Flow
 
-1. **User sends intent** → `POST /analyze`
-2. **YieldAgent** evaluates intent → fetches live yield options
-3. **RiskAgent** assesses risk vs. APY → approves or rejects
-4. **Retry (if needed)** → YieldAgent selects second option, RiskAgent reviews
-5. **Pre-execution quote** → ExecutorAgent fetches Uniswap swap quote
-6. **Pending approval** → Response includes `approval.id` (default 5 min TTL, configurable)
-7. **User reviews** → `POST /execute/confirm` with approval ID
-8. **ExecutorAgent** executes → returns final result with full trace
+```
+User submits intent
+       │
+  POST /analyze
+       │
+  ┌─── YieldAgent ──────── fetches DefiLlama, selects protocol
+  ├─── RiskAgent ────────── evaluates risk + ENS + AXL + memory
+  ├─── Retry (if rejected) ─ selects next protocol
+  └─── ExecutorAgent ─────── quotes Uniswap V3, generates SwapCalldata
+       │
+  Response: { approval, swap.calldata }
+       │
+  Frontend detects calldata
+       │
+  MetaMask: eth_sendTransaction → Sepolia
+       │
+  POST /execute/confirm (only on Tx success)
+       │
+  Execution stored on 0G Galileo (chain 16602)
+       │
+  Final result returned to UI
+```
 
-**Convenience**: `/execute` skips approval and runs all steps in one call.
+---
 
-## Key Features
+## API Endpoints
 
-| Feature | Details |
-|---------|---------|
-| **ENS Signals** | Resolves user ENS, wallet primary ENS, and RelayX/default ENS sources to derive reputation score (0.0–1.0) → affects RiskAgent confidence |
-| **Memory Layer** | Tracks protocol success rates; influences retry selection and confidence adjustments |
-| **AXL Broadcast** | YieldAgent broadcasts yield requests; RiskAgent requests consensus; ExecutorAgent signals results |
-| **Deterministic** | All decisions use rule-based logic; no randomness; same input → same output |
-| **Timeout Protection** | ENS calls, yield data, swaps all have timeout guards; failures degrade gracefully |
-| **Caching** | ENS (configurable TTL), yield data, swap quotes all cached to reduce redundant calls |
-| **Testnet Demo Mode** | `RELAYX_CHAIN=sepolia` switches ENS resolution/reverse lookup to Sepolia while keeping yield/price data live |
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/analyze` | Analyze intent → return pending approval + SwapCalldata |
+| `POST` | `/execute/confirm` | Store confirmed execution to 0G Galileo |
+| `POST` | `/execute` | Analyze + confirm in one call (skips MetaMask) |
+| `GET` | `/health` | Overall server status |
+| `GET` | `/integration-health` | All adapters: axl, uniswap, memory, ens |
+| `GET` | `/axl-health` | AXL peer node status |
+| `GET` | `/yield-health` | DefiLlama availability |
+| `GET` | `/ens-health` | ENS resolution status |
+| `GET` | `/quote-health` | Uniswap QuoterV2 status |
+| `GET` | `/memory-health` | 0G storage status |
 
-## Configuration
+---
 
-### Backend Environment
+## Key Configuration (`backend/.env`)
 
 ```bash
-# Chain and RPC for ENS resolution (Alchemy recommended)
-RELAYX_CHAIN=mainnet
-ALCHEMY_MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
-ALCHEMY_SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_API_KEY
-RELAYX_RPC_URL=
+# ── Chain & RPC ───────────────────────────────────────────
+RELAYX_CHAIN=sepolia                        # mainnet | sepolia
+ALCHEMY_SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+ALCHEMY_MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
 
-# RelayX agent ENS identities
+# ── ENS ───────────────────────────────────────────────────
 RELAYX_AGENT_ENS_ROOT=relayx.eth
-RELAYX_DEFAULT_ENS_SOURCES=system.relayx.eth,ens.eth,nick.eth
+ENS_CACHE_TTL_MS=300000
 
-# Safety and cache controls
+# ── AXL (Gensyn) ──────────────────────────────────────────
+AXL_NODE_URL=http://127.0.0.1:9002          # real AXL binary
+AXL_BASE_URL=http://localhost:3005          # sim node fallback
+AXL_TIMEOUT_MS=1500
+
+# ── Uniswap V3 (QuoterV2 — no API key needed) ────────────
+# UNISWAP_QUOTER_V2_ADDRESS=0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3
+
+# ── 0G Galileo (chain 16602) ──────────────────────────────
+ZEROG_PRIVATE_KEY=0x...                     # backend wallet for storage writes
+ZEROG_EVM_RPC=https://evmrpc-testnet.0g.ai
+ZEROG_INDEXER_URL=https://indexer-storage-testnet-turbo.0g.ai
+
+# ── Safety ────────────────────────────────────────────────
 APPROVAL_TTL_MS=300000
 MAX_INTENT_LENGTH=1000
-RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX_REQUESTS=120
-ENS_CACHE_TTL_MS=300000
-ENS_TEXT_RECORD_KEYS=description,url,com.twitter,com.github
 
-# Yield discovery
-YIELD_SUPPORTED_ASSETS=ETH,USDC,USDT,DAI,WETH,WBTC,STETH
-DEFILLAMA_CHAIN=Ethereum
-
-# AXL infrastructure node URL
-AXL_BASE_URL=http://localhost:3005
-
-# Optional: LLM for explanations (OpenRouter or Groq)
-OPENROUTER_API_KEY=sk-...
-GROQ_API_KEY=gsk-...
-
-# Optional: Uniswap API for swap quotes
-UNISWAP_API_KEY=your_uniswap_api_key
-
-# Optional: 0G Memory storage
-ZEROG_MEMORY_KV_URL=...
-ZEROG_MEMORY_LOG_URL=...
+# ── Optional LLM ──────────────────────────────────────────
+OPENROUTER_API_KEY=sk-or-...
+# GROQ_API_KEY=gsk_...
 ```
 
-## Documentation
-
-- [Architecture & Data Flow](./docs/architecture.md)
-- [Backend Design](./docs/backend.md) — Agents, adapters, orchestration
-- [Frontend Implementation](./docs/frontend.md) — UI flow, API integration
-- [API Reference](./docs/api-reference.md) — Request/response contracts
-- [Development Runbook](./docs/development-runbook.md) — Local setup, debugging
-- [Current Limitations](./docs/current-limitations.md) — Known constraints
-- [Repository Map](./docs/repository-map.md) — File structure
-- [LLM Setup](./docs/llm-setup.md) — Optional reasoning adapter config
+---
 
 ## Testing
 
 ```bash
 cd backend
-npm run test        # Run full test suite (Vitest)
-npm run test:watch  # Watch mode
+npm test            # 140/140 tests (Vitest)
+npm run test:watch  # watch mode
 ```
 
-Test suite covers:
-- Agent decision logic (YieldAgent, RiskAgent, ExecutorAgent)
-- Adapter behavior (ENS, AXL, Uniswap, memory)
-- End-to-end execution scenarios
+Test coverage:
+- All 4 agents (YieldAgent, RiskAgent, ExecutorAgent, BaseAgent)
+- All 6 adapters (ENS, AXL, Uniswap, 0G Memory, YieldData, Reasoning)
+- End-to-end orchestration (15 test files)
 - Edge cases and confidence bounds
 
-## Architecture Diagram
+---
 
-```
-Frontend (Next.js/React)
-    ↓ /api/analyze, /api/execute
-Backend (Express/TypeScript)
-    ↓
-ExecutionService (Orchestrator)
-    ├── YieldAgent (fetch + merge)
-    ├── RiskAgent (approve/reject)
-    ├── ExecutorAgent (quote + execute)
-    └── Adapters
-        ├── ENSAdapter (viem + cache)
-        ├── YieldDataAdapter (DefiLlama + cache)
-        ├── UniswapAdapter (quote fallback to CoinGecko)
-        ├── AXLAdapter (broadcast to peers)
-        ├── ZeroGMemoryAdapter (optional)
-        └── ReasoningAdapter (optional LLM)
-    ↓
-AXL Infrastructure Node (optional, localhost:3005)
-```
+## Documentation
+
+| Doc | Contents |
+|---|---|
+| [Architecture](./docs/architecture.md) | System design, data flow, execution lifecycle |
+| [Backend Design](./docs/backend.md) | Agents, adapters, orchestration, decision logic |
+| [Frontend](./docs/frontend.md) | UI flow, MetaMask integration, API integration |
+| [API Reference](./docs/api-reference.md) | Full request/response schemas |
+| [Development Runbook](./docs/development-runbook.md) | Local setup, debugging, deployment |
+| [Testing Guide](./docs/testing-guide.md) | Step-by-step test playbook (curl + UI) |
+| [Current Limitations](./docs/current-limitations.md) | Known constraints and workarounds |
+| [Bug Fixes](./docs/bug-fixes.md) | Fixed issues and resolution history |
+| [Repository Map](./docs/repository-map.md) | File structure and ownership |
+| [LLM Setup](./docs/llm-setup.md) | Optional reasoning adapter configuration |
+
+---
 
 ## Examples
 
@@ -183,64 +180,55 @@ AXL Infrastructure Node (optional, localhost:3005)
 ```bash
 curl -X POST http://localhost:3001/execute \
   -H "Content-Type: application/json" \
-  -d '{
-    "intent": "find best yield on ETH",
-    "context": { "debug": true }
-  }'
+  -d '{"intent": "find best yield on ETH", "context": {"debug": true}}'
 ```
 
-### With User ENS
+### With ENS Reputation
 
 ```bash
 curl -X POST http://localhost:3001/analyze \
   -H "Content-Type: application/json" \
-  -d '{
-    "intent": "find best USDC yield",
-    "context": {
-      "ens": "vitalik.eth",
-      "debug": true
-    }
-  }'
+  -d '{"intent": "find safest USDC yield", "context": {"ens": "vitalik.eth"}}'
 ```
 
-### Sepolia ENS Demo
-
-Register or configure agent subdomains such as `system.relayx.eth`, `yield.relayx.eth`, `risk.relayx.eth`, and `executor.relayx.eth` on Sepolia, then run:
+### With Wallet (Generates Real SwapCalldata)
 
 ```bash
-RELAYX_CHAIN=sepolia
-RELAYX_AGENT_ENS_ROOT=relayx.eth
-ALCHEMY_SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_API_KEY
+curl -X POST http://localhost:3001/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"intent": "swap ETH for yield", "context": {"wallet": "0xYOUR_ADDRESS"}}'
 ```
 
-ENS resolution and wallet reverse lookup use Sepolia. DefiLlama yield data and CoinGecko quote fallback remain live market-data inputs so the demo stays deterministic and does not submit on-chain transactions.
+The `final_result.swap.calldata` field in the response is ready to pass to MetaMask `eth_sendTransaction`.
 
 ### Two-Step Approval Flow
 
 ```bash
-# Step 1: Analyze
-APPROVAL=$(curl -X POST http://localhost:3001/analyze \
+# Analyze
+APPROVAL=$(curl -s -X POST http://localhost:3001/analyze \
   -H "Content-Type: application/json" \
   -d '{"intent":"find best yield on ETH"}' | jq -r '.approval.id')
 
-# Step 2: Confirm
+# Confirm (after MetaMask tx on frontend)
 curl -X POST http://localhost:3001/execute/confirm \
   -H "Content-Type: application/json" \
   -d "{\"approvalId\":\"$APPROVAL\"}"
 ```
 
-## Deployment
+---
 
-The system is designed for:
-- **Local development**: All services run locally
-- **Production**: Backend API + AXL nodes deployed independently
-- **Cloud**: Containerized via Docker (add `Dockerfile` in backend/frontend as needed)
+## Key Addresses (Sepolia)
 
-See [development-runbook.md](./docs/development-runbook.md) for deployment steps.
+| Contract | Address |
+|---|---|
+| Uniswap V3 QuoterV2 | `0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3` |
+| Uniswap V3 SwapRouter02 | `0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E` |
+| WETH | `0xfff9976782d46cc05630d1f6ebab18b2324d6b14` |
+| USDC | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` |
 
-## Contributing
+## Key Network Info
 
-- Follow TypeScript strict mode conventions
-- Add tests for new adapters and agent logic
-- Update relevant docs when changing behavior
-- Ensure all commands in docs remain accurate
+| Network | Chain ID | Purpose |
+|---|---|---|
+| Sepolia | 11155111 | ENS resolution + Uniswap execution (user-facing) |
+| 0G Galileo | 16602 | Execution memory storage (backend-only) |
