@@ -74,6 +74,10 @@ console.log('[BOOT] ════════════════════
 
 // ─── Health endpoints ─────────────────────────────────────────────────────────
 
+app.get('/', (_req: Request, res: Response) => {
+  res.json({ name: 'RelayX Backend', status: 'ok', docs: '/health' });
+});
+
 app.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({
     status: 'ok',
