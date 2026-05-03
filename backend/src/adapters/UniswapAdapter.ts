@@ -122,22 +122,25 @@ export class UniswapAdapter {
   private lastQuoteSource: 'uniswap-v3-quoter' | 'coingecko' | 'cache' | null = null;
 
   constructor() {
-    this.initViemClient();
+    // Lazy init — don't create client until first use (after dotenv loads)
   }
 
-  private initViemClient(): void {
+  private getViemClient(): ReturnType<typeof createPublicClient> | null {
+    if (this.viemClient) return this.viemClient;
     try {
       const rpcUrl = IS_SEPOLIA
         ? (process.env.ALCHEMY_SEPOLIA_RPC_URL ?? process.env.RELAYX_RPC_URL ?? '')
         : (process.env.ALCHEMY_MAINNET_RPC_URL ?? process.env.RELAYX_RPC_URL ?? '');
 
       const chain = IS_SEPOLIA ? sepolia : mainnet;
-      const transport = rpcUrl ? http(rpcUrl) : http();
+      const transport = rpcUrl ? http(rpcUrl, { timeout: 5000 }) : http(undefined, { timeout: 5000 });
 
       this.viemClient = createPublicClient({ chain, transport });
+      console.log(`[UniswapAdapter] Initialized viem client: ${rpcUrl ? 'Alchemy' : 'public'} (chain ${chain.id})`);
+      return this.viemClient;
     } catch (err) {
       console.warn('[UniswapAdapter] Failed to initialize viem client:', err);
-      this.viemClient = null;
+      return null;
     }
   }
 
@@ -167,7 +170,7 @@ export class UniswapAdapter {
       return null;
     }
 
-    if (!this.viemClient) {
+    if (!this.getViemClient()) {
       console.log('[UniswapAdapter] viem client not initialized');
       return null;
     }
@@ -186,7 +189,7 @@ export class UniswapAdapter {
     // Try each fee tier in parallel, return the best successful quote
     const quotePromises = FEE_TIERS.map(async (fee) => {
       try {
-        const rawResult = await this.viemClient!.readContract({
+        const rawResult = await this.getViemClient()!.readContract({
           address: quoterAddress,
           abi: QUOTER_V2_ABI,
           functionName: 'quoteExactInputSingle',
@@ -348,18 +351,21 @@ export class UniswapAdapter {
 
   /**
    * Build SwapRouter02 calldata for a swap.
+   * Uses multicall(deadline, data[]) pattern required by SwapRouter02.
    * Returns a pre-built transaction the frontend can send to MetaMask.
    */
   async getSwapCalldata(
     params: QuoteParams,
     recipient: string,
-    slippageBps = 50 // 0.5% default slippage
+    slippageBps = 50, // 0.5% default slippage
+    existingQuote?: UniswapQuoteResult | null
   ): Promise<SwapCalldata | null> {
     const chainId = params.chainId ?? CHAIN_ID;
     const routerAddress = SWAP_ROUTER_ADDRESS[chainId];
     if (!routerAddress) return null;
 
-    const quote = await this.getQuote(params);
+    // Use existing quote if provided, otherwise fetch new one
+    const quote = existingQuote ?? await this.getQuote(params);
     if (!quote || !quote.rawAmountOut) return null;
 
     const tokenInAddr = this.resolveTokenAddress(params.tokenIn, chainId);
@@ -368,28 +374,28 @@ export class UniswapAdapter {
 
     const amountOutMin = BigInt(quote.rawAmountOut) * BigInt(10000 - slippageBps) / BigInt(10000);
     const deadline = Math.floor(Date.now() / 1000) + 1800; // 30 min
+    const fee = quote.fee ?? 3000;
 
-    // Encode exactInputSingle calldata
-    // Function selector: exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))
-    // 0x414bf389
-    const fee = (quote as UniswapQuoteResult & { fee?: number }).fee ?? 3000;
-
-    const abiEncoded = encodeExactInputSingle({
+    // SwapRouter02 uses multicall(uint256 deadline, bytes[] data)
+    // Inner call: exactInputSingle((tokenIn, tokenOut, fee, recipient, amountIn, amountOutMinimum, sqrtPriceLimitX96))
+    const innerCalldata = encodeExactInputSingleV2({
       tokenIn: tokenInAddr,
       tokenOut: tokenOutAddr,
       fee,
       recipient: recipient as `0x${string}`,
-      deadline,
       amountIn: BigInt(params.amount),
       amountOutMinimum: amountOutMin,
       sqrtPriceLimitX96: BigInt(0),
     });
 
-    const isETHInput = params.tokenIn.toUpperCase() === 'ETH';
+    // Wrap in multicall(uint256 deadline, bytes[] data)
+    const finalCalldata = encodeMulticall(deadline, [innerCalldata]);
+
+    const isETHInput = params.tokenIn.toUpperCase() === 'ETH' || params.tokenIn.toUpperCase() === 'WETH';
 
     return {
       to: routerAddress,
-      data: abiEncoded,
+      data: finalCalldata,
       value: isETHInput ? params.amount : '0',
       gasEstimate: quote.gasEstimate ?? '200000',
       tokenIn: params.tokenIn,
@@ -438,50 +444,85 @@ export class UniswapAdapter {
   }
 }
 
-// ─── ABI encoding helper ───────────────────────────────────────────────────────
-// Encodes the exactInputSingle(params) call for Uniswap SwapRouter02.
-// SwapRouter02 struct order:
-//   tokenIn, tokenOut, fee, recipient, deadline, amountIn, amountOutMinimum, sqrtPriceLimitX96
-// This differs from SwapRouter01 which has no deadline in the struct.
+// ─── ABI encoding helpers ──────────────────────────────────────────────────────
 
-function encodeExactInputSingle(params: {
+function padHex(value: string, bytes = 32): string {
+  return value.replace('0x', '').padStart(bytes * 2, '0');
+}
+
+function addressToHex(addr: string): string {
+  return padHex(addr.replace('0x', '').toLowerCase());
+}
+
+function uintToHex(value: bigint): string {
+  return padHex(value.toString(16));
+}
+
+/**
+ * Encodes SwapRouter02 exactInputSingle.
+ * Selector: 0x04e45aaf
+ * Struct: (tokenIn, tokenOut, fee, recipient, amountIn, amountOutMinimum, sqrtPriceLimitX96)
+ * NOTE: SwapRouter02 does NOT include deadline in the struct — deadline goes in multicall wrapper.
+ */
+function encodeExactInputSingleV2(params: {
   tokenIn: `0x${string}`;
   tokenOut: `0x${string}`;
   fee: number;
   recipient: `0x${string}`;
-  deadline: number;
   amountIn: bigint;
   amountOutMinimum: bigint;
   sqrtPriceLimitX96: bigint;
 }): `0x${string}` {
-  // Function selector for exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))
-  // keccak256('exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))')
-  const selector = '0x414bf389';
+  // keccak256('exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))')
+  const selector = '0x04e45aaf';
 
-  function padHex(value: string, bytes = 32): string {
-    return value.replace('0x', '').padStart(bytes * 2, '0');
-  }
-
-  function addressToHex(addr: string): string {
-    return padHex(addr.replace('0x', '').toLowerCase());
-  }
-
-  function uintToHex(value: bigint): string {
-    return padHex(value.toString(16));
-  }
-
-  // SwapRouter02 struct order:
-  // tokenIn, tokenOut, fee, recipient, deadline, amountIn, amountOutMinimum, sqrtPriceLimitX96
   const encoded = [
     addressToHex(params.tokenIn),
     addressToHex(params.tokenOut),
     uintToHex(BigInt(params.fee)),
     addressToHex(params.recipient),
-    uintToHex(BigInt(params.deadline)),
     uintToHex(params.amountIn),
     uintToHex(params.amountOutMinimum),
     uintToHex(params.sqrtPriceLimitX96),
   ].join('');
 
+  return `${selector}${encoded}` as `0x${string}`;
+}
+
+/**
+ * Encodes SwapRouter02 multicall(uint256 deadline, bytes[] data).
+ * Selector: 0x5ae401dc
+ * This wraps inner swap calls with a deadline.
+ */
+function encodeMulticall(deadline: number, calls: `0x${string}`[]): `0x${string}` {
+  // keccak256('multicall(uint256,bytes[])')
+  const selector = '0x5ae401dc';
+
+  // ABI encode: (uint256 deadline, bytes[] data)
+  // deadline
+  const deadlineHex = uintToHex(BigInt(deadline));
+
+  // offset to bytes[] (always 64 = 0x40 for two params)
+  const offsetHex = uintToHex(BigInt(64));
+
+  // bytes[] length
+  const arrayLenHex = uintToHex(BigInt(calls.length));
+
+  // For each call: offset, then length + padded data
+  const callOffsets: string[] = [];
+  const callDatas: string[] = [];
+
+  let currentOffset = calls.length * 32; // initial offset past the offset array
+  for (const call of calls) {
+    callOffsets.push(uintToHex(BigInt(currentOffset)));
+    const rawBytes = call.replace('0x', '');
+    const byteLen = rawBytes.length / 2;
+    const lenHex = uintToHex(BigInt(byteLen));
+    const paddedData = rawBytes.padEnd(Math.ceil(rawBytes.length / 64) * 64, '0');
+    callDatas.push(lenHex + paddedData);
+    currentOffset += 32 + Math.ceil(byteLen / 32) * 32;
+  }
+
+  const encoded = deadlineHex + offsetHex + arrayLenHex + callOffsets.join('') + callDatas.join('');
   return `${selector}${encoded}` as `0x${string}`;
 }

@@ -22,8 +22,9 @@ import { ENSAdapter } from '../adapters/ENSAdapter.js';
 import { ZeroGMemoryAdapter } from '../adapters/ZeroGMemoryAdapter.js';
 import { ReasoningAdapter } from '../adapters/ReasoningAdapter.js';
 import { createPublicClient, http, type Address } from 'viem';
+import { mainnet } from 'viem/chains';
 import { getAgentEnsName, getRequiredAgentNames } from '../config/agents.js';
-import { getRelayXChain, getRelayXRpcUrls } from '../config/chain.js';
+import { getRelayXChain } from '../config/chain.js';
 import { getApprovalTtlMs } from '../config/security.js';
 
 const DEFAULT_ENS_SOURCES = ['ens.eth', 'nick.eth'] as const;
@@ -85,7 +86,7 @@ export class ExecutionService {
   private readonly systemAgent: string;
   private readonly requiredAgentNames: string[];
   private readonly approvalTtlMs: number;
-  private readonly reverseLookupClient: ReturnType<typeof createPublicClient>;
+  private reverseLookupClient: ReturnType<typeof createPublicClient> | null = null;
   private yieldAgent: YieldAgent;
   private riskAgent: RiskAgent;
   private executorAgent: ExecutorAgent;
@@ -95,20 +96,10 @@ export class ExecutionService {
   private pendingExecutions = new Map<string, PendingExecution>();
 
   constructor(memoryAdapter = new ZeroGMemoryAdapter()) {
-    const chainConfig = getRelayXChain();
-    const rpcUrls = getRelayXRpcUrls();
-    const rpcUrl = rpcUrls[0];
-    if (rpcUrl === undefined) {
-      throw new Error('No RPC URL configured for ENS reverse lookup');
-    }
 
     this.systemAgent = getAgentEnsName('system');
     this.requiredAgentNames = getRequiredAgentNames();
     this.approvalTtlMs = getApprovalTtlMs();
-    this.reverseLookupClient = createPublicClient({
-      chain: chainConfig.chain,
-      transport: http(rpcUrl),
-    });
     this.memoryAdapter = memoryAdapter;
     this.yieldAgent = new YieldAgent();
     this.riskAgent = new RiskAgent(memoryAdapter);
@@ -207,10 +198,21 @@ export class ExecutionService {
     return out;
   }
 
+  private getReverseLookupClient(): ReturnType<typeof createPublicClient> {
+    if (!this.reverseLookupClient) {
+      const rpc = process.env.ALCHEMY_MAINNET_RPC_URL || 'https://rpc.ankr.com/eth';
+      this.reverseLookupClient = createPublicClient({
+        chain: mainnet,
+        transport: http(rpc),
+      });
+    }
+    return this.reverseLookupClient;
+  }
+
   private async reverseLookupWalletENS(wallet: string): Promise<string | null> {
     try {
       const name = await withTimeout(
-        this.reverseLookupClient.getEnsName({ address: wallet as Address }),
+        this.getReverseLookupClient().getEnsName({ address: wallet as Address }),
         ENS_TIMEOUT_MS,
         `reverseLookup ${wallet}`
       );
@@ -242,7 +244,7 @@ export class ExecutionService {
     const dynamicSources: string[] = [];
     if (userENS) dynamicSources.push(userENS);
     if (walletENS) dynamicSources.push(walletENS);
-    if (!userENS && !walletENS) dynamicSources.push(this.systemAgent);
+    if (!userENS && !walletENS) dynamicSources.push('vitalik.eth');
 
     const finalENSSources = this.uniqEnsSources([...dynamicSources, ...defaultSources]).slice(
       0,
@@ -254,10 +256,19 @@ export class ExecutionService {
     const baseTime = Date.now();
     let ts = baseTime;
 
-    const ensSourceSignals = await this.resolveENSSources(finalENSSources);
+    // ENS resolution with hard 5s total timeout — never blocks execution
+    let ensSourceSignals: ENSSourceSignal[] = [];
+    try {
+      ensSourceSignals = await withTimeout(
+        this.resolveENSSources(finalENSSources),
+        5000,
+        'ENS resolution'
+      );
+    } catch {
+      console.log('[ENS] Total resolution timeout — using neutral defaults');
+    }
     let ensContext = this.buildENSContext(ensSourceSignals, finalENSSources);
 
-    // Task 5: If ENS completely failed, use safe neutral defaults
     if (ensSourceSignals.length === 0) {
       ensContext = { sources: [...finalENSSources], resolved: [], reputationScore: 0.7 };
     }

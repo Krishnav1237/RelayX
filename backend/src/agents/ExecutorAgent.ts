@@ -64,7 +64,7 @@ export class ExecutorAgent extends BaseAgent {
       swapQuote = await this.uniswapAdapter.getQuote(quoteParams);
 
       if (swapQuote && context?.wallet) {
-        const calldata = await this.uniswapAdapter.getSwapCalldata(quoteParams, context.wallet);
+        const calldata = await this.uniswapAdapter.getSwapCalldata(quoteParams, context.wallet, 50, swapQuote);
         if (calldata) {
           swapQuote.calldata = calldata;
         }
